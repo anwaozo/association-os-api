@@ -1,0 +1,99 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  name         String?
+  email        String   @unique
+  phone        String   @unique
+  password     String
+  membershipId Int?
+  role         Int      @default(0) // 0 | 1
+  status       Int?     @default(1)
+  createdAt    DateTime @default(now())
+
+  contacts      Contact[]
+  membership    Membership?    @relation("UserMembership", fields: [membershipId], references: [id])
+  events        Event[]        @relation("UserEvents")
+  refreshTokens RefreshToken[]
+  rsvps         Rsvp[]
+  memberships   Membership[]
+}
+
+model Contact {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String
+  email     String?
+  status    Int?     @default(1)
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Event {
+  id          Int       @id @default(autoincrement())
+  title       String
+  slug        String    @unique
+  date        DateTime  @db.Date
+  start_time  DateTime? @db.Time
+  end_time    DateTime? @db.Time
+  location    String?
+  capacity    Int?
+  price       Float?
+  description String
+  isRSVP      Boolean?  @default(true)
+  isPublic    Boolean?  @default(false)
+  status      Int?      @default(1)
+
+  createdBy Int
+  creator   User   @relation("UserEvents", fields: [createdBy], references: [id])
+  rsvps     Rsvp[]
+
+  createdAt DateTime @default(now())
+}
+
+model Membership {
+  id              Int      @id @default(autoincrement())
+  name            String?
+  slug            String   @unique
+  price           Float?
+  billing_cadence String?
+  benefits        String[]
+  auto_renewal    Boolean? @default(false)
+  status          Int?     @default(1)
+  createdAt       DateTime @default(now())
+
+  createdBy Int
+  creator   User @relation(fields: [createdBy], references: [id])
+
+  users User[] @relation("UserMembership")
+}
+
+model RefreshToken {
+  id         Int      @id @default(autoincrement())
+  tokenHash  String   @unique
+  userId     Int
+  revoked    Boolean  @default(false)
+  replacedBy Int?
+  expiresAt  DateTime
+  user       User     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model Rsvp {
+  user_id   Int
+  event_id  Int
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [user_id], references: [id])
+  event Event @relation(fields: [event_id], references: [id])
+
+  @@unique([user_id, event_id])
+}
