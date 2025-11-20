@@ -84,9 +84,19 @@ export const getAllUserEvents = async (req, res) => {
          include: { creator: true }
       });
 
+      const myRsvp = await prisma.rsvp.findMany({
+         where: {
+            user_id: req.user.id
+         },
+         include: { 
+            event: true
+         }
+      })
+
       return res.json({
          upcomingEvents: upcoming,
-         pastEvents: past
+         pastEvents: past,
+         myRsvp: myRsvp
       });
 
    } catch (err) {
@@ -118,4 +128,27 @@ export const createRsvp = async (req, res) => {
       },
    });
    res.status(201).json(rsvp);
+};
+
+export const deleteRsvp = async (req, res) => {
+   const eventId = parseInt(req.params.event_id);
+
+   if (req.method === "DELETE") {
+      try {
+         await prisma.rsvp.delete({
+            where: { 
+               user_id_event_id: {
+                  user_id: req.user.id,
+                  event_id: eventId
+               }
+            },
+         });
+
+         return res.status(200).json({ message: "RSVP deleted successfully" });
+      } catch (error) {
+         return res.status(500).json({ message: "Failed to delete RSVP"+error });
+      }
+   }
+
+   res.status(405).json({ message: "Method not allowed" });
 };

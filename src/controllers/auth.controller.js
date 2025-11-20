@@ -99,16 +99,16 @@ export const refresh = async (req, res) => {
       if (tokenRecord.revoked) {
          // Reuse detection — revoke all tokens for this user
          await prisma.refreshToken.updateMany({
-         where: { userId: tokenRecord.userId },
-         data: { revoked: true }
+            where: { userId: tokenRecord.userId },
+            data: { revoked: true }
          });
          return res.status(403).json({ message: 'Refresh token revoked. Re-authenticate.' });
       }
 
       if (new Date() > tokenRecord.expiresAt) {
          await prisma.refreshToken.update({
-         where: { id: tokenRecord.id },
-         data: { revoked: true }
+            where: { id: tokenRecord.id },
+            data: { revoked: true }
          });
          return res.status(403).json({ message: 'Refresh token expired' });
       }
@@ -120,9 +120,9 @@ export const refresh = async (req, res) => {
 
       const created = await prisma.refreshToken.create({
          data: {
-         tokenHash: newHash,
-         userId: tokenRecord.userId,
-         expiresAt: newExpiresAt
+            tokenHash: newHash,
+            userId: tokenRecord.userId,
+            expiresAt: newExpiresAt
          }
       });
 

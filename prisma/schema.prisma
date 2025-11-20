@@ -18,12 +18,26 @@ model User {
   status       Int?     @default(1)
   createdAt    DateTime @default(now())
 
-  contacts      Contact[]
-  membership    Membership?    @relation("UserMembership", fields: [membershipId], references: [id])
-  events        Event[]        @relation("UserEvents")
-  refreshTokens RefreshToken[]
-  rsvps         Rsvp[]
-  memberships   Membership[]
+  contacts                Contact[]
+  membership              Membership?             @relation("UserMembership", fields: [membershipId], references: [id])
+  events                  Event[]                 @relation("UserEvents")
+  refreshTokens           RefreshToken[]
+  rsvps                   Rsvp[]
+  userMembershipHistories UserMembershipHistory[]
+  memberships             Membership[]
+}
+
+model UserMembershipHistory {
+  id           Int       @id @default(autoincrement())
+  userId       Int
+  membershipId Int
+  startDate    DateTime  @default(now())
+  endDate      DateTime?
+
+  user       User       @relation(fields: [userId], references: [id])
+  membership Membership @relation(fields: [membershipId], references: [id])
+
+  createdAt DateTime @default(now())
 }
 
 model Contact {
@@ -73,7 +87,8 @@ model Membership {
   createdBy Int
   creator   User @relation(fields: [createdBy], references: [id])
 
-  users User[] @relation("UserMembership")
+  users                   User[]                  @relation("UserMembership")
+  userMembershipHistories UserMembershipHistory[]
 }
 
 model RefreshToken {
