@@ -5,6 +5,9 @@ export const getContacts = async (req, res) => {
       where: {
          role: { in: [2, 3] },
       },
+      include: {
+         membership: true
+      }
    });
    res.json(contacts);
 };

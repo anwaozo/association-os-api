@@ -103,6 +103,7 @@ model RefreshToken {
 }
 
 model Rsvp {
+  id        Int      @id @default(autoincrement())
   user_id   Int
   event_id  Int
   createdAt DateTime @default(now())
@@ -111,4 +112,25 @@ model Rsvp {
   event Event @relation(fields: [event_id], references: [id])
 
   @@unique([user_id, event_id])
+}
+
+model Campaign {
+  id              Int      @id @default(autoincrement())
+  name            String
+  slug            String   @unique
+  goal            Float
+  date            DateTime @db.Date
+  donation_amount Json?
+  capacity        Float
+  price           Float?
+  description     String
+  isCustomAmount  Boolean
+  isPublic        Boolean
+  isAnonymous     Boolean
+  isEmailNotifiy  Boolean
+  isRecurring     Boolean
+  thank_you       String
+
+  createdAt DateTime? @default(now())
+  updatedAt DateTime  @updatedAt
 }
