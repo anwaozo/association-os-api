@@ -48,6 +48,42 @@ export const register = async (req, res) => {
    }
 };
 
+export const bulk_register = async (req, res) => {
+   req.setTimeout(0);
+   res.setTimeout(0);
+   try {
+      const { users } = req.body;
+
+      if (!Array.isArray(users) || users.length === 0) {
+         return res.status(400).json({ message: "Invalid users array" });
+      }
+
+      const formattedUsers = await Promise.all(
+         users.map(async (u) => ({
+            name: u.name,
+            email: u.email,
+            phone: u.phone,
+            role: u.role ? Number(u.role) : null,
+            password: await bcrypt.hash(u.phone, 10),
+         }))
+      );
+
+      // Insert many users
+      const created = await prisma.user.createMany({
+         data: formattedUsers,
+         skipDuplicates: true, // avoids unique email errors
+      });
+
+      res.status(200).json({
+         message: `${created.count} users imported successfully`,
+         count: created.count
+      });
+   } catch (error) {
+      console.error("Bulk register error:", error);
+      res.status(500).json({ error: "Failed to import users" });
+   }
+};
+
 export const login = async (req, res) => {
    try {
       const { email, password } = req.body;
