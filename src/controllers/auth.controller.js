@@ -48,6 +48,26 @@ export const register = async (req, res) => {
    }
 };
 
+export const update = async (req, res) => {
+   try {
+      const id = Number(req.params.id);
+      const { name, email, password, role, phone } = req.body;
+
+      const updated = await prisma.user.update({
+         where: { id },
+         data: {
+            name,
+            email,
+            phone,
+            role: role ? Number(role) : null,
+         },
+      });
+      res.status(200).json(updated);
+   } catch (err) {
+      res.status(500).json({ message: err.message });
+   }
+};
+
 export const bulk_register = async (req, res) => {
    req.setTimeout(0);
    res.setTimeout(0);

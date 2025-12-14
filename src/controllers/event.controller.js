@@ -17,27 +17,55 @@ export const createEvent = async (req, res) => {
 
    const event = await prisma.event.create({
       data: {
-         title,
+         title: title.trim(),
          slug,
-         date: new Date(date), // Prisma needs Date object
-         start_time: toTime(start_time),
-         end_time: toTime(end_time),
-         location,
+         date: new Date(date),
+         start_time,
+         end_time,
+         location: location.trim(),
          capacity: capacity ? Number(capacity) : null,
          price: price ? Number(price) : null,
-         description,
+         description: description.trim(),
          isRSVP: Boolean(isRSVP),
          isPublic: Boolean(isPublic),
-         createdBy: req.user.id,
       },
    });
    res.status(201).json(event);
 };
 
+export const updateEvent = async (req, res) => {
+   const id = Number(req.params.id);
+   const { title, description, date, start_time, end_time, location, capacity, price, isRSVP, isPublic } = req.body;
+   const slug = slugify(title, { lower: true, strict: true });
+
+   const existing = await prisma.event.findUnique({ where: { slug } });
+   if (existing && existing.id !== id) {
+      return res.status(400).json({ message: "Event with this title already exists" });
+   }
+
+   const event = await prisma.event.update({
+      where: { id },
+      data: {
+         title: title.trim(),
+         slug,
+         date: new Date(date),
+         start_time,
+         end_time,
+         location: location.trim(),
+         capacity: capacity ? Number(capacity) : null,
+         price: price ? Number(price) : null,
+         description: description.trim(),
+         isRSVP: Boolean(isRSVP),
+         isPublic: Boolean(isPublic),
+      },
+   });
+   res.status(200).json(event);
+};
+
 export const getAllEvents = async (req, res) => {
    const events = await prisma.event.findMany({
       orderBy: { date: 'asc' },
-         include: {
+      include: {
          rsvps: {
             include: {
                user: true,
@@ -46,8 +74,8 @@ export const getAllEvents = async (req, res) => {
          _count: {
             select: { rsvps: true },
          },
-         },
-      });
+      },
+   });
    res.json(events);
 };
 

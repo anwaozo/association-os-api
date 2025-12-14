@@ -52,19 +52,19 @@ model Contact {
 }
 
 model Event {
-  id          Int       @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   title       String
-  slug        String    @unique
-  date        DateTime  @db.Date
-  start_time  DateTime? @db.Time
-  end_time    DateTime? @db.Time
+  slug        String   @unique
+  date        DateTime @db.Date
+  start_time  String?
+  end_time    String?
   location    String?
   capacity    Int?
   price       Float?
   description String
-  isRSVP      Boolean?  @default(true)
-  isPublic    Boolean?  @default(false)
-  status      Int?      @default(1)
+  isRSVP      Boolean? @default(true)
+  isPublic    Boolean? @default(false)
+  status      Int?     @default(1)
 
   createdBy Int
   creator   User   @relation("UserEvents", fields: [createdBy], references: [id])
