@@ -9,6 +9,7 @@ import contactRoutes from './routes/contact.routes.js';
 import eventRoutes from './routes/event.routes.js';
 import membershipRoutes from './routes/membership.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
+import dashboardRoutes from './routes/dashboard.routes.js';
 
 dotenv.config();
 const app = express();
@@ -25,6 +26,7 @@ app.use('/api/contacts', contactRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/memberships', membershipRoutes);
 app.use('/api/campaign', campaignRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 app.get('/', (req, res) => res.send('API running securely'));
 

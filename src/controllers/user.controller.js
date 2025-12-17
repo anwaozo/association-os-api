@@ -4,10 +4,11 @@ import bcrypt from 'bcryptjs';
 import { addDays, addMonths, addYears } from "date-fns";
 
 export const getAllUsers = async (req, res) => {
-  const users = await prisma.user.findMany({
-    select: { id: true, name: true, email: true, role: true, createdAt: true }
-  });
-  res.json(users);
+   const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      orderBy: {id: 'desc'}
+   });
+   res.json(users);
 };
 
 export const getUserById = async (req, res) => {

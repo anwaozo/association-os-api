@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 dotenv.config();
 
-export const ACCESS_EXPIRES = '15m';
+export const ACCESS_EXPIRES = '2d';
 export const REFRESH_EXPIRES_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 export const signAccessToken = (payload) =>

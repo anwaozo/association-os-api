@@ -2,7 +2,7 @@ import { prisma } from '../config/db.js';
 import slugify from "slugify";
 
 export const getCampaigns = async (req, res) => {
-   const campaigns = await prisma.campaign.findMany();
+   const campaigns = await prisma.campaign.findMany({orderBy: {id: 'desc'}});
    res.json(campaigns);
 };
 
