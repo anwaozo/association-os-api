@@ -44,8 +44,8 @@ CREATE TABLE "Event" (
     "title" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
     "date" DATE NOT NULL,
-    "start_time" TIME,
-    "end_time" TIME,
+    "start_time" TEXT,
+    "end_time" TEXT,
     "location" TEXT,
     "capacity" INTEGER,
     "price" DOUBLE PRECISION,
@@ -90,9 +90,12 @@ CREATE TABLE "RefreshToken" (
 
 -- CreateTable
 CREATE TABLE "Rsvp" (
+    "id" SERIAL NOT NULL,
     "user_id" INTEGER NOT NULL,
     "event_id" INTEGER NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Rsvp_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable

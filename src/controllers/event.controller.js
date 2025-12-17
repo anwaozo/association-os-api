@@ -28,6 +28,7 @@ export const createEvent = async (req, res) => {
          description: description.trim(),
          isRSVP: Boolean(isRSVP),
          isPublic: Boolean(isPublic),
+         createdBy: req.user.id,
       },
    });
    res.status(201).json(event);
