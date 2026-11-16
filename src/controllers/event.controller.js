@@ -1,183 +1,133 @@
-import { prisma } from '../config/db.js';
-import slugify from "slugify";
+import slugify from 'slugify';
+import { userMini } from '../utils/selects.js';
 
-const toTime = (timeStr) => {
-  if (!timeStr) return null; 
-  return new Date(`1970-01-01T${timeStr}:00Z`);
+const startOfToday = () => {
+   const d = new Date();
+   d.setUTCHours(0, 0, 0, 0);
+   return d;
 };
 
-export const createEvent = async (req, res) => {
-   const { title, description, date, start_time, end_time, location, capacity, price, isRSVP, isPublic } = req.body;
-   const slug = slugify(title, { lower: true, strict: true });
+const trimOrNull = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
 
-   const existing = await prisma.event.findUnique({ where: { slug } });
-   if (existing) {
-      return res.status(400).json({ message: "Event with this title already exists" });
-   }
-
-   const event = await prisma.event.create({
+function eventData(body) {
+   const title = trimOrNull(body.title);
+   const description = trimOrNull(body.description) || '';
+   if (!title) return { error: 'Title is required' };
+   if (!body.date || Number.isNaN(new Date(body.date).getTime())) return { error: 'A valid date is required' };
+   return {
       data: {
-         title: title.trim(),
-         slug,
-         date: new Date(date),
-         start_time,
-         end_time,
-         location: location.trim(),
-         capacity: capacity ? Number(capacity) : null,
-         price: price ? Number(price) : null,
-         description: description.trim(),
-         isRSVP: Boolean(isRSVP),
-         isPublic: Boolean(isPublic),
-         createdBy: req.user.id,
+         title,
+         slug: slugify(title, { lower: true, strict: true }),
+         date: new Date(body.date),
+         start_time: trimOrNull(body.start_time),
+         end_time: trimOrNull(body.end_time),
+         location: trimOrNull(body.location),
+         capacity: body.capacity ? Number(body.capacity) : null,
+         price: body.price ? Number(body.price) : null,
+         description,
+         isRSVP: Boolean(body.isRSVP),
+         isPublic: Boolean(body.isPublic),
       },
-   });
+   };
+}
+
+export const createEvent = async (req, res) => {
+   const { data, error } = eventData(req.body);
+   if (error) return res.status(400).json({ message: error });
+
+   const existing = await req.db.event.findFirst({ where: { slug: data.slug }, select: { id: true } });
+   if (existing) return res.status(400).json({ message: 'Event with this title already exists' });
+
+   const event = await req.db.event.create({ data: { ...data, createdBy: req.user.id } });
    res.status(201).json(event);
 };
 
 export const updateEvent = async (req, res) => {
    const id = Number(req.params.id);
-   const { title, description, date, start_time, end_time, location, capacity, price, isRSVP, isPublic } = req.body;
-   const slug = slugify(title, { lower: true, strict: true });
+   if (!Number.isInteger(id)) return res.status(400).json({ message: 'Invalid id' });
 
-   const existing = await prisma.event.findUnique({ where: { slug } });
+   const { data, error } = eventData(req.body);
+   if (error) return res.status(400).json({ message: error });
+
+   const existing = await req.db.event.findFirst({ where: { slug: data.slug }, select: { id: true } });
    if (existing && existing.id !== id) {
-      return res.status(400).json({ message: "Event with this title already exists" });
+      return res.status(400).json({ message: 'Event with this title already exists' });
    }
 
-   const event = await prisma.event.update({
-      where: { id },
-      data: {
-         title: title.trim(),
-         slug,
-         date: new Date(date),
-         start_time,
-         end_time,
-         location: location.trim(),
-         capacity: capacity ? Number(capacity) : null,
-         price: price ? Number(price) : null,
-         description: description.trim(),
-         isRSVP: Boolean(isRSVP),
-         isPublic: Boolean(isPublic),
-      },
-   });
+   // Scoped: an event from another organization returns 404.
+   const event = await req.db.event.update({ where: { id }, data });
    res.status(200).json(event);
 };
 
 export const getAllEvents = async (req, res) => {
-   const events = await prisma.event.findMany({
+   const events = await req.db.event.findMany({
       orderBy: { date: 'asc' },
       include: {
-         rsvps: {
-            include: {
-               user: true,
-            },
-         },
-         _count: {
-            select: { rsvps: true },
-         },
+         rsvps: { include: { user: { select: userMini } } },
+         _count: { select: { rsvps: true } },
       },
    });
    res.json(events);
 };
 
 export const getAllUserEvents = async (req, res) => {
-   try {
-      const today = new Date();  // current date & time
+   const today = startOfToday();
 
-      const upcoming_result = await prisma.event.findMany({
-         where: {
-            date: {
-               gte: today
-            }
-         },
+   const [upcomingResult, pastEvents, myRsvp] = await Promise.all([
+      req.db.event.findMany({
+         where: { date: { gte: today } },
          orderBy: { date: 'asc' },
-         include: { 
-            rsvps: {
-               where: { user_id: req.user.id }
-            }
-         }
-      });
-
-      const upcoming = upcoming_result.map(event => ({
-         ...event,
-         isAttending: event.rsvps.length > 0 
-      }));
-
-      const past = await prisma.event.findMany({
-         where: {
-            date: {
-               lt: today
-            }
+         include: {
+            rsvps: { where: { user_id: req.user.id } },
+            _count: { select: { rsvps: true } },
          },
+      }),
+      req.db.event.findMany({
+         where: { date: { lt: today } },
          orderBy: { date: 'desc' },
-         include: { creator: true }
-      });
+         include: { creator: { select: userMini } },
+      }),
+      req.db.rsvp.findMany({
+         where: { user_id: req.user.id },
+         include: { event: true },
+      }),
+   ]);
 
-      const myRsvp = await prisma.rsvp.findMany({
-         where: {
-            user_id: req.user.id
-         },
-         include: { 
-            event: true
-         }
-      })
+   const upcomingEvents = upcomingResult.map((event) => ({
+      ...event,
+      isAttending: event.rsvps.length > 0,
+   }));
 
-      return res.json({
-         upcomingEvents: upcoming,
-         pastEvents: past,
-         myRsvp: myRsvp
-      });
-
-   } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: "Server error" });
-   }
+   return res.json({ upcomingEvents, pastEvents, myRsvp });
 };
 
 export const createRsvp = async (req, res) => {
-   const { event_id } = req.body;
+   const eventId = Number(req.body.event_id);
+   if (!Number.isInteger(eventId)) return res.status(400).json({ message: 'Invalid event' });
 
-   const existing = await prisma.rsvp.findUnique({
-      where: {
-         user_id_event_id: {
-            user_id: req.user.id,
-            event_id: Number(event_id),
-         }
-      }
+   // The event must belong to the caller's organization.
+   const event = await req.db.event.findFirst({
+      where: { id: eventId },
+      include: { _count: { select: { rsvps: true } } },
    });
-
-   if (existing) {
-      return res.status(400).json({ message: "You already RSVP'd for this event" });
+   if (!event) return res.status(404).json({ message: 'Event not found' });
+   if (event.isRSVP === false) return res.status(400).json({ message: 'This event does not take RSVPs' });
+   if (event.capacity && event._count.rsvps >= event.capacity) {
+      return res.status(400).json({ message: 'This event is full' });
    }
 
-   const rsvp = await prisma.rsvp.create({
-      data: {
-         user_id: req.user.id,
-         event_id: Number(event_id),
-      },
-   });
+   const existing = await req.db.rsvp.findFirst({ where: { user_id: req.user.id, event_id: eventId } });
+   if (existing) return res.status(400).json({ message: "You already RSVP'd for this event" });
+
+   const rsvp = await req.db.rsvp.create({ data: { user_id: req.user.id, event_id: eventId } });
    res.status(201).json(rsvp);
 };
 
 export const deleteRsvp = async (req, res) => {
-   const eventId = parseInt(req.params.event_id);
+   const eventId = Number(req.params.event_id);
+   if (!Number.isInteger(eventId)) return res.status(400).json({ message: 'Invalid event' });
 
-   if (req.method === "DELETE") {
-      try {
-         await prisma.rsvp.delete({
-            where: { 
-               user_id_event_id: {
-                  user_id: req.user.id,
-                  event_id: eventId
-               }
-            },
-         });
-
-         return res.status(200).json({ message: "RSVP deleted successfully" });
-      } catch (error) {
-         return res.status(500).json({ message: "Failed to delete RSVP"+error });
-      }
-   }
-
-   res.status(405).json({ message: "Method not allowed" });
+   const { count } = await req.db.rsvp.deleteMany({ where: { user_id: req.user.id, event_id: eventId } });
+   if (count === 0) return res.status(404).json({ message: 'RSVP not found' });
+   return res.status(200).json({ message: 'RSVP deleted successfully' });
 };

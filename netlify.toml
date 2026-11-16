@@ -1,0 +1,22 @@
+# AssociationOS API on Netlify Functions.
+# The Express app is unchanged; netlify/functions/api.js wraps it.
+
+[build]
+  command   = "npm run build:netlify"   # prisma generate + prisma migrate deploy
+  functions = "netlify/functions"
+  publish   = "public"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[functions]
+  node_bundler = "esbuild"
+  # Prisma's generated client (and its query compiler) must ship with the function.
+  external_node_modules = ["@prisma/client", "@prisma/adapter-pg", "pg"]
+  included_files = ["node_modules/.prisma/client/**"]
+
+[[redirects]]
+  from   = "/api/*"
+  to     = "/.netlify/functions/api/:splat"
+  status = 200
+  force  = true

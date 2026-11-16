@@ -1,0 +1,23 @@
+# Local stack: Postgres + API. `docker compose up`, then in another shell:
+#   docker compose exec api npx prisma migrate deploy && docker compose exec api npm run db:seed
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: aos
+      POSTGRES_PASSWORD: aos
+      POSTGRES_DB: aos
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+  api:
+    build: .
+    depends_on: [db]
+    ports: ["4000:4000"]
+    environment:
+      DATABASE_URL: postgresql://aos:aos@db:5432/aos
+      DIRECT_URL: postgresql://aos:aos@db:5432/aos
+      JWT_SECRET: local-dev-secret-change-me-local-dev-secret
+      CORS_ORIGINS: http://localhost:3000
+      NODE_ENV: development
+volumes:
+  pgdata:

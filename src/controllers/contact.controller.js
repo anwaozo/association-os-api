@@ -1,14 +1,17 @@
-import { prisma } from '../config/db.js';
+import { userDirectory } from '../utils/selects.js';
+import { ROLES } from '../middleware/auth.js';
 
+// Members and contacts of the caller's organization.
+// Admins use this for Contacts & Members; members use it for the directory.
 export const getContacts = async (req, res) => {
-   const contacts = await prisma.user.findMany({
+   const isAdmin = req.user.role === ROLES.ADMIN;
+   const contacts = await req.db.user.findMany({
       where: {
-         role: { in: [2, 3] },
+         role: { in: isAdmin ? [ROLES.MEMBER, ROLES.CONTACT] : [ROLES.MEMBER] },
+         ...(isAdmin ? {} : { status: 1 }),
       },
-      include: {
-         membership: true
-      }
+      select: { ...userDirectory, status: isAdmin },
+      orderBy: { id: 'desc' },
    });
    res.json(contacts);
 };
-

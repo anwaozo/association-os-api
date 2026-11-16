@@ -1,6 +1,4 @@
 import app from './src/app.js';
-import dotenv from 'dotenv';
-dotenv.config();
+import { env } from './src/config/env.js';
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+app.listen(env.PORT, () => console.log(`AssociationOS API on http://localhost:${env.PORT}`));

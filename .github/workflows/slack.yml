@@ -4,43 +4,25 @@ on:
   pull_request:
     branches:
       - release/development
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - closed
+    types: [opened, reopened, synchronize, closed]
 
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare Slack Message
-        id: msg
-        run: |
-          echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV
-          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
-          echo "PR_AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_ENV
-          echo "PR_URL=${{ github.event.pull_request.html_url }}" >> $GITHUB_ENV
-          echo "BRANCH=${{ github.head_ref }}" >> $GITHUB_ENV
-          echo "MERGED=${{ github.event.pull_request.merged }}" >> $GITHUB_ENV
-          echo "COMMIT_SHA=${{ github.sha }}" >> $GITHUB_ENV
-
       - name: Send Slack Notification
         env:
-          WEBHOOK: https://hooks.slack.com/services/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
+          # Set in GitHub: Settings > Secrets and variables > Actions > SLACK_WEBHOOK_URL
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          BRANCH: ${{ github.head_ref }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          if [ "$MERGED" = "true" ]; then
-            # PR MERGED MESSAGE
-            curl -X POST -H 'Content-type: application/json' \
-            --data "{
-              \"text\": \"*PR Merged into development*\n• *Title:* ${PR_TITLE}\n• *PR #:* ${PR_NUMBER}\n• *Author:* ${PR_AUTHOR}\n• *Merged by:* ${GITHUB_ACTOR}\n• *Commit:* ${COMMIT_SHA}\n• *Branch:* ${BRANCH}\n• *URL:* ${PR_URL}\"
-            }" \
-            $WEBHOOK
-          else
-            # PR OPENED/UPDATED MESSAGE
-            curl -X POST -H 'Content-type: application/json' \
-            --data "{
-              \"text\": \"*New Pull Request Activity*\n• *Title:* ${PR_TITLE}\n• *PR #:* ${PR_NUMBER}\n• *Author:* ${PR_AUTHOR}\n• *Commit:* ${COMMIT_SHA}\n• *Branch:* ${BRANCH}\n• *URL:* ${PR_URL}\"
-            }" \
-            $WEBHOOK
-          fi
+          if [ -z "$WEBHOOK" ]; then echo "SLACK_WEBHOOK_URL not set; skipping"; exit 0; fi
+          if [ "$MERGED" = "true" ]; then HEAD="*PR Merged into development*"; else HEAD="*New Pull Request Activity*"; fi
+          TEXT="$HEAD\n• *Title:* ${PR_TITLE}\n• *PR #:* ${PR_NUMBER}\n• *Author:* ${PR_AUTHOR}\n• *Commit:* ${COMMIT_SHA}\n• *Branch:* ${BRANCH}\n• *URL:* ${PR_URL}"
+          jq -n --arg text "$(printf "$TEXT")" '{text: $text}' | curl -sS -X POST -H 'Content-type: application/json' --data @- "$WEBHOOK"

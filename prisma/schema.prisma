@@ -1,23 +1,60 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  // "client" = Rust-free query compiler + pg driver adapter.
+  // No native engine binary to bundle, so the same build runs on
+  // Netlify Functions, AWS, Docker, or the Mac Studio servers.
+  engineType = "client"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Runtime traffic (Supabase: the pooled connection string, port 6543)
+  url       = env("DATABASE_URL")
+  // Migrations (Supabase: the direct connection string, port 5432)
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// Every tenant-owned table carries organizationId. The API never queries
+// those tables without it (see src/config/db.js -> forTenant()).
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id           Int      @id @default(autoincrement())
+  name         String
+  slug         String   @unique
+  tagline      String?
+  logoUrl      String?
+  primaryColor String?  @default("#1F3864")
+  status       Int      @default(1) // 1 active | 0 suspended
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  users                   User[]
+  contacts                Contact[]
+  events                  Event[]
+  memberships             Membership[]
+  rsvps                   Rsvp[]
+  campaigns               Campaign[]
+  userMembershipHistories UserMembershipHistory[]
 }
 
 model User {
-  id           Int      @id @default(autoincrement())
-  name         String?
-  email        String   @unique
-  phone        String   @unique
-  password     String
-  membershipId Int?
-  role         Int      @default(0) // 0 | 1
-  status       Int?     @default(1)
-  createdAt    DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  organizationId  Int
+  name            String?
+  // Email stays unique across the platform for now so login needs no org picker.
+  email           String   @unique
+  phone           String
+  password        String
+  membershipId    Int?
+  role            Int      @default(0) // 1 admin | 2 member | 3 contact
+  isPlatformAdmin Boolean  @default(false) // Apperr staff: can create organizations
+  status          Int?     @default(1)
+  createdAt       DateTime @default(now())
 
+  organization            Organization            @relation(fields: [organizationId], references: [id])
   contacts                Contact[]
   membership              Membership?             @relation("UserMembership", fields: [membershipId], references: [id])
   events                  Event[]                 @relation("UserEvents")
@@ -25,58 +62,75 @@ model User {
   rsvps                   Rsvp[]
   userMembershipHistories UserMembershipHistory[]
   memberships             Membership[]
+
+  @@unique([organizationId, phone])
+  @@index([organizationId])
 }
 
 model UserMembershipHistory {
-  id           Int       @id @default(autoincrement())
-  userId       Int
-  membershipId Int
-  startDate    DateTime  @default(now())
-  endDate      DateTime?
+  id             Int       @id @default(autoincrement())
+  organizationId Int
+  userId         Int
+  membershipId   Int
+  startDate      DateTime  @default(now())
+  endDate        DateTime?
 
-  user       User       @relation(fields: [userId], references: [id])
-  membership Membership @relation(fields: [membershipId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+  membership   Membership   @relation(fields: [membershipId], references: [id])
 
   createdAt DateTime @default(now())
+
+  @@index([organizationId])
 }
 
 model Contact {
-  id        Int      @id @default(autoincrement())
-  name      String
-  phone     String
-  email     String?
-  status    Int?     @default(1)
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  name           String
+  phone          String
+  email          String?
+  status         Int?     @default(1)
+  userId         Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User     @relation(fields: [userId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
 }
 
 model Event {
-  id          Int      @id @default(autoincrement())
-  title       String
-  slug        String   @unique
-  date        DateTime @db.Date
-  start_time  String?
-  end_time    String?
-  location    String?
-  capacity    Int?
-  price       Float?
-  description String
-  isRSVP      Boolean? @default(true)
-  isPublic    Boolean? @default(false)
-  status      Int?     @default(1)
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  title          String
+  slug           String
+  date           DateTime @db.Date
+  start_time     String?
+  end_time       String?
+  location       String?
+  capacity       Int?
+  price          Float?
+  description    String
+  isRSVP         Boolean? @default(true)
+  isPublic       Boolean? @default(false)
+  status         Int?     @default(1)
 
-  createdBy Int
-  creator   User   @relation("UserEvents", fields: [createdBy], references: [id])
-  rsvps     Rsvp[]
+  createdBy    Int
+  organization Organization @relation(fields: [organizationId], references: [id])
+  creator      User         @relation("UserEvents", fields: [createdBy], references: [id])
+  rsvps        Rsvp[]
 
   createdAt DateTime @default(now())
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, date])
 }
 
 model Membership {
   id              Int      @id @default(autoincrement())
+  organizationId  Int
   name            String?
-  slug            String   @unique
+  slug            String
   price           Float?
   billing_cadence String?
   benefits        String[]
@@ -84,11 +138,14 @@ model Membership {
   status          Int?     @default(1)
   createdAt       DateTime @default(now())
 
-  createdBy Int
-  creator   User @relation(fields: [createdBy], references: [id])
+  createdBy    Int
+  organization Organization @relation(fields: [organizationId], references: [id])
+  creator      User         @relation(fields: [createdBy], references: [id])
 
   users                   User[]                  @relation("UserMembership")
   userMembershipHistories UserMembershipHistory[]
+
+  @@unique([organizationId, slug])
 }
 
 model RefreshToken {
@@ -103,21 +160,25 @@ model RefreshToken {
 }
 
 model Rsvp {
-  id        Int      @id @default(autoincrement())
-  user_id   Int
-  event_id  Int
-  createdAt DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  user_id        Int
+  event_id       Int
+  createdAt      DateTime @default(now())
 
-  user  User  @relation(fields: [user_id], references: [id])
-  event Event @relation(fields: [event_id], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [user_id], references: [id])
+  event        Event        @relation(fields: [event_id], references: [id])
 
   @@unique([user_id, event_id])
+  @@index([organizationId])
 }
 
 model Campaign {
   id              Int      @id @default(autoincrement())
+  organizationId  Int
   name            String
-  slug            String   @unique
+  slug            String
   goal            Float
   date            DateTime @db.Date
   donation_amount Json?
@@ -131,6 +192,11 @@ model Campaign {
   isRecurring     Boolean
   thank_you       String
 
+  organization Organization @relation(fields: [organizationId], references: [id])
+
   createdAt DateTime? @default(now())
   updatedAt DateTime  @updatedAt
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
 }
