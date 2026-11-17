@@ -40,8 +40,16 @@ app.get('/api/health', async (_req, res) => {
    try {
       await prisma.$queryRaw`SELECT 1`;
       res.json({ ok: true, db: 'up' });
-   } catch {
-      res.status(503).json({ ok: false, db: 'down' });
+   } catch (err) {
+      // Report why the database is unreachable, never the connection string.
+      // e.g. 28P01 = wrong password, ENOTFOUND = bad host, ETIMEDOUT = network/SSL.
+      const driver = err?.meta?.driverAdapterError?.cause;
+      const code = driver?.originalCode || driver?.kind || err?.code || 'UNKNOWN';
+      const message = String(driver?.originalMessage || driver?.kind || err?.message || '')
+         .replace(/postgres(ql)?:\/\/[^\s"']+/gi, '[connection string]')
+         .slice(0, 300);
+      console.error('Health check failed:', code, message);
+      res.status(503).json({ ok: false, db: 'down', error: { code, message } });
    }
 });
 

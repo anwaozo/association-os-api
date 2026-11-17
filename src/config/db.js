@@ -2,11 +2,30 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { env } from './env.js';
 
+// Build the node-postgres config from DATABASE_URL.
+// - Drops Prisma-engine-only params (pgbouncer, connection_limit, ...) that
+//   node-postgres doesn't understand.
+// - Managed Postgres (Supabase, Neon, RDS) expects TLS; node-postgres does not
+//   turn it on by itself. DB_SSL=true|false overrides the auto-detection.
+export function pgConfig(url = env.DATABASE_URL) {
+   const u = new URL(url);
+   for (const p of ['pgbouncer', 'connection_limit', 'pool_timeout', 'schema', 'sslmode', 'sslaccept']) {
+      u.searchParams.delete(p);
+   }
+   const managedHost = /(supabase\.(com|co)|neon\.tech|rds\.amazonaws\.com)$/i.test(u.hostname);
+   const sslSetting = (process.env.DB_SSL || 'auto').toLowerCase();
+   const useSsl = sslSetting === 'true' || (sslSetting === 'auto' && managedHost);
+   return {
+      connectionString: u.toString(),
+      // Provider certificates are not in Node's default CA list.
+      ssl: useSsl ? { rejectUnauthorized: false } : false,
+      max: env.DB_POOL_MAX,
+      connectionTimeoutMillis: 10000,
+   };
+}
+
 // One pooled client per process (or per warm serverless instance).
-const adapter = new PrismaPg({
-   connectionString: env.DATABASE_URL,
-   max: env.DB_POOL_MAX,
-});
+const adapter = new PrismaPg(pgConfig());
 
 const globalForPrisma = globalThis;
 export const prisma = globalForPrisma.__aosPrisma ?? new PrismaClient({ adapter });
