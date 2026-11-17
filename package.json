@@ -13,7 +13,7 @@
       "prisma:migrate:deploy": "prisma migrate deploy",
       "db:seed": "node prisma/seed.js",
       "build": "prisma generate",
-      "build:netlify": "prisma generate && prisma migrate deploy",
+      "build:netlify": "prisma generate && prisma migrate deploy && node prisma/seed-on-deploy.js",
       "postinstall": "prisma generate"
    },
    "keywords": [],

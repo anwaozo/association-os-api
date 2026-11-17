@@ -177,7 +177,10 @@ async function main() {
    const hash = await bcrypt.hash(PASSWORD, 10);
    await ensurePlatformAdmin(hash);
    for (const spec of ORGS) await seedOrg(spec, hash);
-   console.log(`\nAll seeded accounts use the password from SEED_PASSWORD (default: ${PASSWORD}).`);
+   // Never print a custom password: build logs are shared and secret-scanned.
+   console.log(process.env.SEED_PASSWORD
+      ? '\nAll seeded accounts use the password in SEED_PASSWORD.'
+      : `\nAll seeded accounts use the default demo password (${PASSWORD}). Set SEED_PASSWORD for anything public.`);
 }
 
 main()
