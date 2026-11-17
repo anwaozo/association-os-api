@@ -13,6 +13,7 @@ import membershipRoutes from './routes/membership.routes.js';
 import campaignRoutes from './routes/campaign.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import { organizationRoutes, platformRoutes } from './routes/organization.routes.js';
+import onboardingRoutes from './routes/onboarding.routes.js';
 
 const app = express();
 
@@ -62,6 +63,7 @@ app.use('/api/campaign', campaignRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/platform', platformRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 app.get('/', (_req, res) => res.send('AssociationOS API'));
 

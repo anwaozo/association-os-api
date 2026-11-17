@@ -242,24 +242,130 @@ test('organization branding endpoints', async () => {
    assert.equal(memberEdit.status, 403);
 });
 
-test('T25: platform admin creates an organization; its admin sees an empty org', async () => {
-   const denied = await call('POST', '/api/platform/organizations', { token: tokens.aAdmin, body: { name: 'Nope' } });
+test('T25: platform admin creates an organization and gets a single-use invite link', async () => {
+   const denied = await call('POST', '/api/platform/organizations', { token: tokens.aAdmin, body: { name: 'Nope', contactEmail: 'n@n.org' } });
    assert.equal(denied.status, 403);
 
    const stamp = Date.now();
    const email = `owner.${stamp}@neworg.org`;
    const r = await call('POST', '/api/platform/organizations', {
       token: tokens.platform,
-      body: { name: `New Org ${stamp}`, primaryColor: '#123456', admin: { name: 'Owner', email, phone: '7135550199', password: 'Str0ngPass!' } },
+      body: { name: `New Org ${stamp}`, primaryColor: '#123456', contactName: 'Owner', contactEmail: email, contactPhone: '7135550199' },
    });
    assert.equal(r.status, 201, r.raw);
+   assert.ok(r.body.invite.token, 'raw token returned once');
+   assert.equal(r.body.invite.status, 'pending');
+   assert.ok(!r.raw.includes('tokenHash'), 'hash never returned');
+
+   const info = await call('GET', `/api/onboarding/invites/${r.body.invite.token}`);
+   assert.equal(info.status, 200, info.raw);
+   assert.equal(info.body.email, email);
+   assert.equal(info.body.organization.primaryColor, '#123456');
+
+   const acc = await call('POST', `/api/onboarding/invites/${r.body.invite.token}/accept`, { body: { name: 'Owner One', phone: '7135550199', password: 'Str0ngPass!' } });
+   assert.equal(acc.status, 201, acc.raw);
+   assert.ok(acc.body.accessToken && acc.body.refreshToken);
+   assert.equal(acc.body.user.role, 1);
+   assert.equal(acc.body.organization.onboardedAt, null, 'new org still needs welcome setup');
+
+   const again = await call('POST', `/api/onboarding/invites/${r.body.invite.token}/accept`, { body: { name: 'X', phone: '1', password: 'Another1!' } });
+   assert.equal(again.status, 410, 'single use');
+
    const s = await call('POST', '/api/auth/login', { body: { email, password: 'Str0ngPass!' } });
    assert.equal(s.status, 200);
-   assert.equal(s.body.organization.primaryColor, '#123456');
    const contacts = await call('GET', '/api/contacts', { token: s.body.accessToken });
    assert.deepEqual(contacts.body, []);
-   const events = await call('GET', '/api/events', { token: s.body.accessToken });
-   assert.deepEqual(events.body, []);
+
+   const done = await call('POST', '/api/organizations/current/onboarding-complete', { token: s.body.accessToken });
+   assert.equal(done.status, 200);
+   assert.ok(done.body.onboardedAt);
+
+   const list = await call('GET', '/api/platform/organizations', { token: tokens.platform });
+   const row = list.body.find((o) => o.contactEmail === email);
+   assert.equal(row.latestInvite.status, 'used');
+});
+
+test('public sign-up creates a pending application that cannot log in until approved', async () => {
+   const stamp = Date.now();
+   const email = `apply.${stamp}@chamber.org`;
+   const bad = await call('POST', '/api/onboarding/signup', { body: { organizationName: 'X' } });
+   assert.equal(bad.status, 400);
+
+   const r = await call('POST', '/api/onboarding/signup', {
+      body: { organizationName: `Applicant Chamber ${stamp}`, contactName: 'Pat Applicant', contactEmail: email, contactPhone: '2815550100' },
+   });
+   assert.equal(r.status, 201, r.raw);
+   const dup = await call('POST', '/api/onboarding/signup', {
+      body: { organizationName: `Applicant Chamber ${stamp}`, contactName: 'Pat', contactEmail: email, contactPhone: '1' },
+   });
+   assert.equal(dup.status, 400, 'one pending application per email');
+
+   const usedEmail = await call('POST', '/api/onboarding/signup', {
+      body: { organizationName: 'Taken', contactName: 'T', contactEmail: A.admin, contactPhone: '1' },
+   });
+   assert.equal(usedEmail.status, 400, 'existing account email refused');
+
+   const honeypot = await call('POST', '/api/onboarding/signup', {
+      body: { organizationName: 'Bot Org', contactName: 'Bot', contactEmail: `bot.${stamp}@x.org`, contactPhone: '1', website: 'http://spam' },
+   });
+   assert.equal(honeypot.status, 201);
+
+   const pending = (await call('GET', '/api/platform/organizations?status=2', { token: tokens.platform })).body;
+   const app = pending.find((o) => o.contactEmail === email);
+   assert.ok(app, 'shows in the approval queue');
+   assert.equal(app.status, 2);
+   assert.ok(!pending.some((o) => o.contactEmail === `bot.${stamp}@x.org`), 'honeypot submission not stored');
+
+   const notYet = await call('POST', `/api/platform/organizations/${app.id}/invites`, { token: tokens.platform });
+   assert.equal(notYet.status, 400, 'no invite before approval');
+
+   const memberTry = await call('POST', `/api/platform/organizations/${app.id}/approve`, { token: tokens.aAdmin });
+   assert.equal(memberTry.status, 403, 'only platform admins approve');
+
+   const ok = await call('POST', `/api/platform/organizations/${app.id}/approve`, { token: tokens.platform });
+   assert.equal(ok.status, 200, ok.raw);
+   assert.equal(ok.body.organization.status, 1);
+   const first = ok.body.invite.token;
+
+   // Regenerating kills the old link.
+   const regen = await call('POST', `/api/platform/organizations/${app.id}/invites`, { token: tokens.platform });
+   assert.equal(regen.status, 200, regen.raw);
+   const oldLink = await call('GET', `/api/onboarding/invites/${first}`);
+   assert.equal(oldLink.status, 410);
+   assert.equal(oldLink.body.status, 'revoked');
+   const newLink = await call('GET', `/api/onboarding/invites/${regen.body.invite.token}`);
+   assert.equal(newLink.status, 200);
+   assert.equal(newLink.body.phone, '2815550100', 'phone prefilled from the application');
+
+   const twiceApprove = await call('POST', `/api/platform/organizations/${app.id}/approve`, { token: tokens.platform });
+   assert.equal(twiceApprove.status, 400);
+});
+
+test('rejecting an application; garbage and expired invite links are refused', async () => {
+   const stamp = Date.now();
+   await call('POST', '/api/onboarding/signup', {
+      body: { organizationName: `Reject Me ${stamp}`, contactName: 'R', contactEmail: `rej.${stamp}@x.org`, contactPhone: '1' },
+   });
+   const app = (await call('GET', '/api/platform/organizations?status=2', { token: tokens.platform })).body.find((o) => o.contactEmail === `rej.${stamp}@x.org`);
+   const rej = await call('POST', `/api/platform/organizations/${app.id}/reject`, { token: tokens.platform, body: { reason: 'Not a membership org' } });
+   assert.equal(rej.status, 200);
+   assert.equal(rej.body.organization.status, 3);
+   assert.equal(rej.body.organization.rejectionReason, 'Not a membership org');
+
+   const garbage = await call('GET', '/api/onboarding/invites/not-a-real-token');
+   assert.equal(garbage.status, 404);
+
+   // Expire an invite directly and confirm it's refused.
+   const created = await call('POST', '/api/platform/organizations', {
+      token: tokens.platform,
+      body: { name: `Expiring Org ${stamp}`, contactName: 'E', contactEmail: `exp.${stamp}@x.org`, contactPhone: '1' },
+   });
+   await prisma.invite.update({ where: { id: created.body.invite.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+   const expired = await call('POST', `/api/onboarding/invites/${created.body.invite.token}/accept`, { body: { name: 'E', phone: '1', password: 'Password123' } });
+   assert.equal(expired.status, 410);
+   assert.equal(expired.body.status, 'expired');
+   const list = (await call('GET', '/api/platform/organizations', { token: tokens.platform })).body;
+   assert.equal(list.find((o) => o.contactEmail === `exp.${stamp}@x.org`).latestInvite.status, 'expired');
 });
 
 test('tenant client refuses cross-tenant writes at the data layer', async () => {

@@ -27,9 +27,20 @@ model Organization {
   tagline      String?
   logoUrl      String?
   primaryColor String?  @default("#1F3864")
-  status       Int      @default(1) // 1 active | 0 suspended
+  status       Int      @default(1) // 1 active | 0 suspended | 2 pending approval | 3 rejected
+  // Who applied / who the first admin invite goes to
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  approvedAt   DateTime?
+  rejectedAt   DateTime?
+  rejectionReason String?
+  // Set when the org's first admin finishes the welcome setup
+  onboardedAt  DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @default(now()) @updatedAt
+
+  invites                 Invite[]
 
   users                   User[]
   contacts                Contact[]
@@ -38,6 +49,26 @@ model Organization {
   rsvps                   Rsvp[]
   campaigns               Campaign[]
   userMembershipHistories UserMembershipHistory[]
+}
+
+// Single-use admin invite links. Only a SHA-256 hash of the token is stored;
+// the raw link is shown once, when it is generated.
+model Invite {
+  id             Int       @id @default(autoincrement())
+  organizationId Int
+  email          String
+  name           String?
+  role           Int       @default(1)
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  revokedAt      DateTime?
+  createdById    Int?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
 }
 
 model User {

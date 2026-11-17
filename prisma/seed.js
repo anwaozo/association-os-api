@@ -3,6 +3,7 @@
 //
 //   SEED_PASSWORD=...  password for every seeded account (default below)
 //   SEED_PLATFORM_EMAIL=...  platform admin email (default admin@associationos.app)
+//   SEED_DEMO_ORGS=true|false  also create the two sample organizations (default true)
 import bcrypt from 'bcryptjs';
 import slugify from 'slugify';
 import { prisma } from '../src/config/db.js';
@@ -79,7 +80,7 @@ async function ensurePlatformAdmin(hash) {
    const org = await prisma.organization.upsert({
       where: { slug: 'associationos' },
       update: {},
-      create: { name: 'AssociationOS', slug: 'associationos', tagline: 'Platform administration', primaryColor: '#1F3864' },
+      create: { name: 'AssociationOS', slug: 'associationos', tagline: 'Platform administration', primaryColor: '#1F3864', approvedAt: new Date(), onboardedAt: new Date() },
    });
    await prisma.user.create({
       data: {
@@ -97,7 +98,7 @@ async function seedOrg(spec, hash) {
 
    await prisma.$transaction(async (tx) => {
       const org = await tx.organization.create({
-         data: { name: spec.name, slug: spec.slug, tagline: spec.tagline, primaryColor: spec.primaryColor },
+         data: { name: spec.name, slug: spec.slug, tagline: spec.tagline, primaryColor: spec.primaryColor, approvedAt: new Date(), onboardedAt: new Date() },
       });
       const organizationId = org.id;
 
@@ -176,7 +177,13 @@ async function seedOrg(spec, hash) {
 async function main() {
    const hash = await bcrypt.hash(PASSWORD, 10);
    await ensurePlatformAdmin(hash);
-   for (const spec of ORGS) await seedOrg(spec, hash);
+   // Sample organizations are for local dev and demos. Off on deploy unless
+   // SEED_DEMO_ORGS=true (see seed-on-deploy.js).
+   if ((process.env.SEED_DEMO_ORGS ?? 'true') === 'true') {
+      for (const spec of ORGS) await seedOrg(spec, hash);
+   } else {
+      console.log('SEED_DEMO_ORGS is not true: skipping sample organizations');
+   }
    // Never print a custom password: build logs are shared and secret-scanned.
    console.log(process.env.SEED_PASSWORD
       ? '\nAll seeded accounts use the password in SEED_PASSWORD.'

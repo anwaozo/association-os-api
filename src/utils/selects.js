@@ -32,4 +32,5 @@ export const orgPublic = {
    tagline: true,
    logoUrl: true,
    primaryColor: true,
+   onboardedAt: true,
 };
