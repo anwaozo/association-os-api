@@ -45,6 +45,12 @@ All use the password in `SEED_PASSWORD` (default `Demo@2026!`).
 
 Change `SEED_PASSWORD` before seeding any database that is reachable from the internet.
 
+### Lost the platform admin password?
+
+On the API site in Netlify set `SEED_ON_DEPLOY=true`, `SEED_RESET_ADMIN_PASSWORD=true` and a new
+`SEED_PASSWORD`, then redeploy. The build resets the platform admin's password to `SEED_PASSWORD`
+and signs out its old sessions. Set `SEED_RESET_ADMIN_PASSWORD` back to `false` afterwards.
+
 ## Deploy
 
 ### Netlify (current)

@@ -75,6 +75,21 @@ async function ensurePlatformAdmin(hash) {
       if (!existing.isPlatformAdmin) {
          await prisma.user.update({ where: { id: existing.id }, data: { isPlatformAdmin: true } });
       }
+      // Recovery for a lost platform admin password: set SEED_PASSWORD to the
+      // new password and SEED_RESET_ADMIN_PASSWORD=true, then redeploy.
+      // Refuses to reset to the built-in default demo password.
+      if (process.env.SEED_RESET_ADMIN_PASSWORD === 'true') {
+         if (!process.env.SEED_PASSWORD) {
+            console.log('SEED_RESET_ADMIN_PASSWORD=true but SEED_PASSWORD is not set: password NOT reset');
+         } else {
+            await prisma.$transaction([
+               prisma.user.update({ where: { id: existing.id }, data: { password: hash, status: 1 } }),
+               // Sign out any existing sessions for this account.
+               prisma.refreshToken.updateMany({ where: { userId: existing.id, revoked: false }, data: { revoked: true } }),
+            ]);
+            console.log(`Platform admin password reset to SEED_PASSWORD: ${PLATFORM_EMAIL}`);
+         }
+      }
       return console.log(`Platform admin exists: ${PLATFORM_EMAIL}`);
    }
    const org = await prisma.organization.upsert({
