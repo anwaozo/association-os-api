@@ -222,6 +222,21 @@ test('campaign create and list stay inside the organization', async () => {
    assert.ok(!bList.some((x) => x.name === name));
 });
 
+test('campaign edit: own org works, other org and members cannot', async () => {
+   const name = `Editable ${Date.now()}`;
+   const c = await call('POST', '/api/campaign', { token: tokens.aAdmin, body: { name, date: '2030-05-01', goal: 500 } });
+   assert.equal(c.status, 201, c.raw);
+   const body = { name: `${name} v2`, date: '2030-06-01', goal: 900 };
+   const ok = await call('PUT', `/api/campaign/${c.body.id}`, { token: tokens.aAdmin, body });
+   assert.equal(ok.status, 200, ok.raw);
+   assert.equal(ok.body.goal, 900);
+   assert.equal(ok.body.name, `${name} v2`);
+   const other = await call('PUT', `/api/campaign/${c.body.id}`, { token: tokens.bAdmin, body: { ...body, name: 'hijack' } });
+   assert.equal(other.status, 404, other.raw);
+   const member = await call('PUT', `/api/campaign/${c.body.id}`, { token: tokens.aMember, body });
+   assert.equal(member.status, 403, member.raw);
+});
+
 test('T21: refresh rotates tokens and detects reuse', async () => {
    const s = await login(A.member);
    const r1 = await call('POST', '/api/auth/refresh', { body: { refreshToken: s.refreshToken } });
