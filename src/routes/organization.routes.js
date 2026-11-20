@@ -6,6 +6,7 @@ import {
    approveOrganization, rejectOrganization, regenerateInvite,
 } from '../controllers/organization.controller.js';
 import { completeOnboarding } from '../controllers/onboarding.controller.js';
+import { setPlatformFee } from '../controllers/payment.controller.js';
 
 export const organizationRoutes = express.Router();
 organizationRoutes.get('/current', authMiddleware, getCurrent);
@@ -21,3 +22,4 @@ platformRoutes.put('/organizations/:id/status', setOrganizationStatus);
 platformRoutes.post('/organizations/:id/approve', approveOrganization);
 platformRoutes.post('/organizations/:id/reject', rejectOrganization);
 platformRoutes.post('/organizations/:id/invites', regenerateInvite);
+platformRoutes.put('/organizations/:id/fee', setPlatformFee);

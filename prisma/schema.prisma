@@ -21,26 +21,37 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Organization {
-  id           Int      @id @default(autoincrement())
-  name         String
-  slug         String   @unique
-  tagline      String?
-  logoUrl      String?
-  primaryColor String?  @default("#1F3864")
-  status       Int      @default(1) // 1 active | 0 suspended | 2 pending approval | 3 rejected
+  id                     Int       @id @default(autoincrement())
+  name                   String
+  slug                   String    @unique
+  tagline                String?
+  logoUrl                String?
+  primaryColor           String?   @default("#1F3864")
+  status                 Int       @default(1) // 1 active | 0 suspended | 2 pending approval | 3 rejected
   // Who applied / who the first admin invite goes to
-  contactName  String?
-  contactEmail String?
-  contactPhone String?
-  approvedAt   DateTime?
-  rejectedAt   DateTime?
-  rejectionReason String?
+  contactName            String?
+  contactEmail           String?
+  contactPhone           String?
+  approvedAt             DateTime?
+  rejectedAt             DateTime?
+  rejectionReason        String?
   // Set when the org's first admin finishes the welcome setup
-  onboardedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @default(now()) @updatedAt
+  onboardedAt            DateTime?
+  // Stripe Connect (Express). Donations are destination charges to this account.
+  stripeAccountId        String?   @unique
+  stripeChargesEnabled   Boolean   @default(false)
+  stripeDetailsSubmitted Boolean   @default(false)
+  // Apperr's cut of each online donation, in percent. 0 = no fee.
+  platformFeePercent     Float     @default(0)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @default(now()) @updatedAt
 
-  invites                 Invite[]
+  invites           Invite[]
+  activities        Activity[]
+  messageTemplates  MessageTemplate[]
+  messages          Message[]
+  messageRecipients MessageRecipient[]
+  donations         Donation[]
 
   users                   User[]
   contacts                Contact[]
@@ -72,18 +83,29 @@ model Invite {
 }
 
 model User {
-  id              Int      @id @default(autoincrement())
-  organizationId  Int
-  name            String?
+  id                  Int       @id @default(autoincrement())
+  organizationId      Int
+  name                String?
   // Email stays unique across the platform for now so login needs no org picker.
-  email           String   @unique
-  phone           String
-  password        String
-  membershipId    Int?
-  role            Int      @default(0) // 1 admin | 2 member | 3 contact
-  isPlatformAdmin Boolean  @default(false) // Apperr staff: can create organizations
-  status          Int?     @default(1)
-  createdAt       DateTime @default(now())
+  email               String    @unique
+  phone               String
+  password            String
+  membershipId        Int?
+  role                Int       @default(0) // 1 admin | 2 member | 3 contact
+  isPlatformAdmin     Boolean   @default(false) // Apperr staff: can create organizations
+  status              Int?      @default(1)
+  // Directory profile (filled in by the member under Settings > My Profile)
+  title               String?
+  company             String?
+  location            String?
+  about               String?
+  website             String?
+  linkedin            String?
+  tags                String[]  @default([])
+  showInDirectory     Boolean   @default(true)
+  // Notifications bell: activity newer than this is "unread"
+  notificationsSeenAt DateTime?
+  createdAt           DateTime  @default(now())
 
   organization            Organization            @relation(fields: [organizationId], references: [id])
   contacts                Contact[]
@@ -93,6 +115,7 @@ model User {
   rsvps                   Rsvp[]
   userMembershipHistories UserMembershipHistory[]
   memberships             Membership[]
+  donations               Donation[]
 
   @@unique([organizationId, phone])
   @@index([organizationId])
@@ -116,16 +139,16 @@ model UserMembershipHistory {
 }
 
 model Contact {
-  id             Int      @id @default(autoincrement())
+  id             Int          @id @default(autoincrement())
   organizationId Int
   name           String
   phone          String
   email          String?
-  status         Int?     @default(1)
+  status         Int?         @default(1)
   userId         Int
   organization   Organization @relation(fields: [organizationId], references: [id])
-  user           User     @relation(fields: [userId], references: [id])
-  createdAt      DateTime @default(now())
+  user           User         @relation(fields: [userId], references: [id])
+  createdAt      DateTime     @default(now())
 
   @@index([organizationId])
 }
@@ -224,10 +247,136 @@ model Campaign {
   thank_you       String
 
   organization Organization @relation(fields: [organizationId], references: [id])
+  donations    Donation[]
 
   createdAt DateTime? @default(now())
   updatedAt DateTime  @updatedAt
 
   @@unique([organizationId, slug])
   @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications: an append-only activity feed per organization.
+// type: member_joined | members_imported | event_created | event_rsvp |
+//       membership_changed | campaign_created | donation | message_sent
+// ---------------------------------------------------------------------------
+model Activity {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  type           String
+  actorId        Int?
+  title          String
+  detail         String?
+  meta           Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Messages (email). Sent through Resend when RESEND_API_KEY is set.
+// ---------------------------------------------------------------------------
+model MessageTemplate {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  name           String
+  subject        String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  messages     Message[]
+
+  @@unique([organizationId, name])
+}
+
+// status: draft | ready (saved, email not configured yet) | sending | sent | partial | failed
+// audienceType: all_members | active_members | tier | event_attendees | custom
+model Message {
+  id             Int       @id @default(autoincrement())
+  organizationId Int
+  templateId     Int?
+  subject        String
+  body           String
+  audienceType   String
+  audienceRef    Json?
+  audienceLabel  String
+  status         String    @default("draft")
+  recipientCount Int       @default(0)
+  sentCount      Int       @default(0)
+  failedCount    Int       @default(0)
+  createdById    Int?
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id])
+  template     MessageTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  recipients   MessageRecipient[]
+
+  @@index([organizationId, createdAt])
+}
+
+// status: pending | sent | delivered | bounced | failed
+model MessageRecipient {
+  id             Int       @id @default(autoincrement())
+  organizationId Int
+  messageId      Int
+  userId         Int?
+  name           String?
+  email          String
+  status         String    @default("pending")
+  providerId     String?   @unique
+  error          String?
+  sentAt         DateTime?
+  deliveredAt    DateTime?
+  openedAt       DateTime?
+  clickedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([messageId])
+}
+
+// ---------------------------------------------------------------------------
+// Fundraising. Online donations go through Stripe Checkout as destination
+// charges to the organization's connected Express account. Admins can also
+// record offline gifts (cash, check, other).
+// method: stripe | cash | check | other
+// status: pending | succeeded | failed | refunded
+// ---------------------------------------------------------------------------
+model Donation {
+  id                    Int       @id @default(autoincrement())
+  organizationId        Int
+  campaignId            Int?
+  userId                Int?
+  donorName             String?
+  donorEmail            String?
+  amountCents           Int
+  currency              String    @default("usd")
+  method                String
+  status                String    @default("pending")
+  isAnonymous           Boolean   @default(false)
+  note                  String?
+  stripeSessionId       String?   @unique
+  stripePaymentIntentId String?   @unique
+  feeCents              Int       @default(0)
+  createdById           Int?
+  paidAt                DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now()) @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  campaign     Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([campaignId])
 }

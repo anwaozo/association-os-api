@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { addMonths, addYears } from 'date-fns';
 import { orgPublic, userPublic } from '../utils/selects.js';
+import { logActivity } from '../utils/activity.js';
 
 export const me = async (req, res) => {
    const user = await req.db.user.findFirst({
@@ -44,7 +45,7 @@ export const updateMembership = async (req, res) => {
    // The tier must belong to the caller's organization.
    const membership = await req.db.membership.findFirst({
       where: { id: membershipId },
-      select: { id: true, billing_cadence: true },
+      select: { id: true, name: true, billing_cadence: true },
    });
    if (!membership) return res.status(404).json({ message: 'Membership not found' });
 
@@ -61,6 +62,13 @@ export const updateMembership = async (req, res) => {
          data: { userId: req.user.id, membershipId, startDate, endDate },
       }),
    ]);
+
+   await logActivity(req.db, {
+      type: 'membership_changed',
+      actorId: req.user.id,
+      title: `${updated.name || updated.email} switched to the ${membership.name || 'new'} tier`,
+      meta: { userId: req.user.id, membershipId },
+   });
 
    res.json(updated);
 };
@@ -80,6 +88,10 @@ export const updateMe = async (req, res) => {
       if (taken) return res.status(400).json({ message: 'Phone already in use' });
       data.phone = phone;
    }
+   const profile = profileData(req.body);
+   if (profile.error) return res.status(400).json({ message: profile.error });
+   Object.assign(data, profile.data);
+
    if (req.body.newPassword) {
       if (String(req.body.newPassword).length < 8) {
          return res.status(400).json({ message: 'New password must be at least 8 characters' });
@@ -95,3 +107,44 @@ export const updateMe = async (req, res) => {
    const updated = await req.db.user.update({ where: { id: req.user.id }, data, select: userPublic });
    res.json(updated);
 };
+
+// Directory profile fields. Only keys present in the body are changed.
+const LIMITS = { title: 120, company: 120, location: 120, about: 2000, website: 300, linkedin: 300 };
+const MAX_TAGS = 10;
+
+function cleanUrl(v) {
+   const s = String(v).trim();
+   if (!s) return null;
+   const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+   try {
+      const u = new URL(withScheme);
+      return ['http:', 'https:'].includes(u.protocol) ? u.toString() : undefined;
+   } catch {
+      return undefined;
+   }
+}
+
+export function profileData(body) {
+   const data = {};
+   for (const [field, max] of Object.entries(LIMITS)) {
+      if (body[field] === undefined) continue;
+      if (body[field] === null) { data[field] = null; continue; }
+      if (field === 'website' || field === 'linkedin') {
+         const url = cleanUrl(body[field]);
+         if (url === undefined) return { error: `${field === 'website' ? 'Website' : 'LinkedIn'} must be a valid link` };
+         data[field] = url;
+         continue;
+      }
+      const v = String(body[field]).trim();
+      if (v.length > max) return { error: `${field} must be at most ${max} characters` };
+      data[field] = v || null;
+   }
+   if (body.tags !== undefined) {
+      const raw = Array.isArray(body.tags) ? body.tags : String(body.tags || '').split(',');
+      const tags = [...new Set(raw.map((t) => String(t).trim()).filter(Boolean).map((t) => t.slice(0, 40)))];
+      if (tags.length > MAX_TAGS) return { error: `At most ${MAX_TAGS} areas of expertise` };
+      data.tags = tags;
+   }
+   if (body.showInDirectory !== undefined) data.showInDirectory = Boolean(body.showInDirectory);
+   return { data };
+}

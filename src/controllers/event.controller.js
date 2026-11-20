@@ -1,3 +1,4 @@
+import { logActivity } from '../utils/activity.js';
 import slugify from 'slugify';
 import { userMini } from '../utils/selects.js';
 
@@ -39,6 +40,13 @@ export const createEvent = async (req, res) => {
    if (existing) return res.status(400).json({ message: 'Event with this title already exists' });
 
    const event = await req.db.event.create({ data: { ...data, createdBy: req.user.id } });
+   await logActivity(req.db, {
+      type: 'event_created',
+      actorId: req.user.id,
+      title: `New event: ${event.title}`,
+      detail: event.location || null,
+      meta: { eventId: event.id, slug: event.slug },
+   });
    res.status(201).json(event);
 };
 
@@ -120,6 +128,13 @@ export const createRsvp = async (req, res) => {
    if (existing) return res.status(400).json({ message: "You already RSVP'd for this event" });
 
    const rsvp = await req.db.rsvp.create({ data: { user_id: req.user.id, event_id: eventId } });
+   const who = await req.db.user.findFirst({ where: { id: req.user.id }, select: { name: true, email: true } });
+   await logActivity(req.db, {
+      type: 'event_rsvp',
+      actorId: req.user.id,
+      title: `${who?.name || who?.email || 'A member'} RSVP'd to ${event.title}`,
+      meta: { eventId: event.id, userId: req.user.id },
+   });
    res.status(201).json(rsvp);
 };
 

@@ -48,6 +48,11 @@ export const TENANT_MODELS = new Set([
    'Membership',
    'Rsvp',
    'Campaign',
+   'Activity',
+   'MessageTemplate',
+   'Message',
+   'MessageRecipient',
+   'Donation',
 ]);
 
 const WHERE_OPS = new Set([

@@ -10,6 +10,7 @@ import {
 } from '../utils/tokens.js';
 import { userPublic, orgPublic } from '../utils/selects.js';
 import { ROLES } from '../middleware/auth.js';
+import { logActivity } from '../utils/activity.js';
 
 const REFRESH_COOKIE_NAME = 'jid';
 const cookieOptions = {
@@ -76,6 +77,14 @@ export const register = async (req, res) => {
       select: userPublic,
    });
 
+   await logActivity(req.db, {
+      type: 'member_joined',
+      actorId: req.user.id,
+      title: `${user.name || user.email} was added as a ${role === ROLES.MEMBER ? 'member' : role === ROLES.ADMIN ? 'admin' : 'contact'}`,
+      detail: user.email,
+      meta: { userId: user.id, role },
+   });
+
    res.status(201).json(user);
 };
 
@@ -127,6 +136,15 @@ export const bulk_register = async (req, res) => {
    );
 
    const created = await req.db.user.createMany({ data: formatted, skipDuplicates: true });
+
+   if (created.count > 0) {
+      await logActivity(req.db, {
+         type: 'members_imported',
+         actorId: req.user.id,
+         title: `${created.count} ${created.count === 1 ? 'person was' : 'people were'} imported`,
+         meta: { count: created.count },
+      });
+   }
 
    res.status(200).json({
       message: `${created.count} people imported successfully`,

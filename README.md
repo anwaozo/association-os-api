@@ -86,3 +86,81 @@ Run `npx prisma migrate deploy` as a release step.
 `prisma/migrations/20261116190000_multi_tenancy` moves all existing data into an organization
 called "The Friar Society" (slug `friar-society`) and makes `admin@mail.com` a platform admin.
 Back up the database before running `prisma migrate deploy` against it.
+
+## Directory, Notifications, Messages, Fundraising
+
+### Directory profiles
+Members fill in title, company, location, website, LinkedIn, about and up to 10 areas of
+expertise under **Settings > My Profile** (`PUT /api/users/me`). `showInDirectory: false`
+hides a member from other members; admins still see everyone.
+
+### Notifications (activity feed)
+Actions write a row to `Activity` (member added, people imported, event created, RSVP,
+tier change, campaign created, donation, message sent).
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/notifications?type=a,b&before=<id>` | org admin, 50 per page |
+| GET | `/api/notifications/unread-count` | org admin |
+| POST | `/api/notifications/seen` | org admin |
+
+### Messages (email through Resend)
+Each organization gets five editable default templates. Audiences: `all_members`,
+`members_and_contacts`, `tier` (`{ tierId }`), `event_attendees` (`{ eventId }`),
+`custom` (`{ userIds }`). Merge fields: `{{first_name}}`, `{{name}}`, `{{email}}`, `{{organization}}`.
+
+Until `RESEND_API_KEY` and `EMAIL_FROM` are set, "send" saves a message as `ready`; once email
+is on, admins send ready messages with one click. Messages go out in batches of 100 from
+`"<Org name>" <EMAIL_FROM>` with reply-to set to the org's contact email.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/messages/config` | `{ emailEnabled }` |
+| GET/POST/PUT/DELETE | `/api/messages/templates[/:id]` | |
+| POST | `/api/messages/audience-preview` | `{ audienceType, audienceRef }` → `{ label, count }` |
+| GET/POST | `/api/messages` | POST body adds `action: "send" \| "draft"` |
+| GET/PUT/DELETE | `/api/messages/:id` | edit/delete only drafts and ready messages |
+| POST | `/api/messages/:id/send` | |
+| POST | `/api/messages/webhook/resend` | Resend webhook (Svix-signed, no login) |
+
+**Turning email on:** create a Resend account, verify the sending domain (add its DNS records),
+then set `RESEND_API_KEY` and `EMAIL_FROM` on the API site and redeploy. For delivery tracking,
+add a Resend webhook to `https://<api-site>/api/messages/webhook/resend` for `email.delivered`,
+`email.opened`, `email.clicked`, `email.bounced` and `email.complained`, then set `RESEND_WEBHOOK_SECRET`.
+
+### Fundraising (Stripe Connect, Express accounts)
+Each organization connects its own Stripe Express account from **Settings > Payments**.
+Online gifts use Stripe Checkout as *destination charges*, so funds land in the organization's
+account. `Organization.platformFeePercent` (default 0) adds an application fee for Apperr;
+a platform admin sets it with `PUT /api/platform/organizations/:id/fee`.
+Admins can also record cash, check and other offline gifts.
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/payments/status` | org admin |
+| POST | `/api/payments/connect` | org admin → `{ url }` (Stripe onboarding) |
+| POST | `/api/payments/dashboard` | org admin → `{ url }` (Express dashboard) |
+| GET | `/api/donations/availability` | logged in → `{ acceptingDonations }` |
+| POST | `/api/donations/checkout` | logged in: `{ amount, campaignId?, isAnonymous?, note? }` → `{ url }` |
+| GET | `/api/donations/mine` | logged in |
+| GET | `/api/donations`, `/api/donations/summary` | org admin |
+| POST / DELETE | `/api/donations[/:id]` | org admin: record / delete offline gifts |
+| GET | `/api/public/:orgSlug/campaigns/:slug` | anyone (public campaigns only) |
+| POST | `/api/public/:orgSlug/campaigns/:slug/checkout` | anyone: adds `donorName`, `donorEmail` |
+| POST | `/api/payments/webhook` | Stripe webhook (signed, no login) |
+
+`GET /api/campaign` now includes `raisedCents` and `donationCount` for each campaign.
+The public donation page is `https://<web-app>/give/<org-slug>/<campaign-slug>` (campaigns marked public).
+
+**Turning on online giving (test mode first):**
+1. In the Stripe dashboard (Apperr's platform account), enable **Connect** and choose Express.
+2. Set `STRIPE_SECRET_KEY` (`sk_test_...`) and `APP_URL` on the API site.
+3. Add a webhook endpoint `https://<api-site>/api/payments/webhook` for *your account* events
+   `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `checkout.session.expired` and `charge.refunded`.
+   Set its signing secret as `STRIPE_WEBHOOK_SECRET`.
+4. Add a second endpoint (same URL) for *connected accounts* events `account.updated`.
+   Set its signing secret as `STRIPE_CONNECT_WEBHOOK_SECRET`.
+5. Redeploy, open Settings > Payments as an org admin and connect.
+
+Recurring (monthly) donations are not in this release; campaigns marked recurring take one-time gifts.

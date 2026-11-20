@@ -14,6 +14,11 @@ import campaignRoutes from './routes/campaign.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import { organizationRoutes, platformRoutes } from './routes/organization.routes.js';
 import onboardingRoutes from './routes/onboarding.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
+import messageRoutes from './routes/message.routes.js';
+import { paymentRoutes, donationRoutes, publicRoutes } from './routes/payment.routes.js';
+import { stripeWebhook } from './controllers/payment.controller.js';
+import { resendWebhook } from './controllers/message.controller.js';
 
 const app = express();
 
@@ -30,6 +35,11 @@ app.use((req, _res, next) => {
    }
    next();
 });
+
+// Webhooks verify a signature over the exact bytes, so they get the raw body
+// and skip JSON parsing and input sanitizing.
+app.post('/api/payments/webhook', express.raw({ type: '*/*', limit: '1mb' }), stripeWebhook);
+app.post('/api/messages/webhook/resend', express.raw({ type: '*/*', limit: '1mb' }), resendWebhook);
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
@@ -64,6 +74,11 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/organizations', organizationRoutes);
 app.use('/api/platform', platformRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/donations', donationRoutes);
+app.use('/api/public', publicRoutes);
 
 app.get('/', (_req, res) => res.send('AssociationOS API'));
 

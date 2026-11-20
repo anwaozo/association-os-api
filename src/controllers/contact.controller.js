@@ -8,7 +8,7 @@ export const getContacts = async (req, res) => {
    const contacts = await req.db.user.findMany({
       where: {
          role: { in: isAdmin ? [ROLES.MEMBER, ROLES.CONTACT] : [ROLES.MEMBER] },
-         ...(isAdmin ? {} : { status: 1 }),
+         ...(isAdmin ? {} : { status: 1, showInDirectory: true }),
       },
       select: { ...userDirectory, status: isAdmin },
       orderBy: { id: 'desc' },

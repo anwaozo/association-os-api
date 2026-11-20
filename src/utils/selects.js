@@ -1,3 +1,9 @@
+// Directory profile fields a member fills in about themselves.
+export const PROFILE_FIELDS = ['title', 'company', 'location', 'about', 'website', 'linkedin', 'tags', 'showInDirectory'];
+function profileFields() {
+   return Object.fromEntries(PROFILE_FIELDS.map((f) => [f, true]));
+}
+
 // Public shapes for API responses. Never return User rows without one of these:
 // the User table holds password hashes.
 export const userPublic = {
@@ -9,6 +15,7 @@ export const userPublic = {
    status: true,
    membershipId: true,
    organizationId: true,
+   ...profileFields(),
    createdAt: true,
 };
 
@@ -19,6 +26,7 @@ export const userDirectory = {
    email: true,
    phone: true,
    role: true,
+   ...profileFields(),
    createdAt: true,
    membership: { select: { id: true, name: true } },
 };

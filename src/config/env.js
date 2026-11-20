@@ -21,6 +21,17 @@ export const env = {
    // Serverless: keep this small (Supabase pooler does the real pooling).
    DB_POOL_MAX: Number(process.env.DB_POOL_MAX || (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME ? 1 : 10)),
    RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX || 300),
+   // The web app's public URL, used in Stripe return links. Defaults to the
+   // first non-wildcard CORS origin.
+   APP_URL: (process.env.APP_URL || list(process.env.CORS_ORIGINS || 'http://localhost:3000').find((o) => !o.includes('*')) || 'http://localhost:3000').replace(/\/$/, ''),
+   // Email (Resend). Sending stays off until both are set.
+   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
+   EMAIL_FROM: process.env.EMAIL_FROM || '',
+   RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET || '',
+   // Stripe Connect. Online donations stay off until the secret key is set.
+   STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
+   STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',
+   STRIPE_CONNECT_WEBHOOK_SECRET: process.env.STRIPE_CONNECT_WEBHOOK_SECRET || '',
 };
 
 if (env.isProd && env.JWT_SECRET.length < 32) {
