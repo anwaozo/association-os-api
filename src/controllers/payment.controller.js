@@ -354,3 +354,53 @@ export const stripeWebhook = async (req, res) => {
    res.json({ received: true });
 };
 
+
+// ---------------------------------------------------------------------------
+// Refund an online gift from AssociationOS  POST /api/donations/:id/refund (admin)
+// Full refund. The transfer to the org's account is reversed (and any
+// platform fee returned), so the money comes back out of the org's balance,
+// same as ticking "Reverse the associated transfer" in the Stripe dashboard.
+// ---------------------------------------------------------------------------
+export const refundDonation = async (req, res) => {
+   const stripe = getStripe();
+   if (!stripe) return res.status(503).json({ message: 'Online payments are not set up on this platform yet.' });
+   const id = Number(req.params.id);
+   if (!Number.isInteger(id)) return res.status(400).json({ message: 'Invalid id' });
+
+   const d = await req.db.donation.findFirst({ where: { id }, include: { campaign: { select: { name: true } } } });
+   if (!d) return res.status(404).json({ message: 'Donation not found' });
+   if (d.method !== 'stripe') return res.status(400).json({ message: 'Only online gifts can be refunded here. Delete a recorded gift instead.' });
+   if (d.status === 'refunded') return res.status(400).json({ message: 'This gift was already refunded' });
+   if (d.status !== 'succeeded' || !d.stripePaymentIntentId) return res.status(400).json({ message: 'Only paid gifts can be refunded' });
+
+   try {
+      await stripe.refunds.create(
+         {
+            payment_intent: d.stripePaymentIntentId,
+            reverse_transfer: true,
+            ...(d.feeCents > 0 ? { refund_application_fee: true } : {}),
+            reason: 'requested_by_customer',
+            metadata: { donationId: String(d.id), organizationId: String(req.orgId), refundedBy: String(req.user.id) },
+         },
+         { idempotencyKey: `refund-donation-${d.id}` },
+      );
+   } catch (err) {
+      const msg = err?.raw?.message || err?.message || 'Stripe could not refund this gift';
+      // Already refunded in the dashboard: just record it.
+      if (err?.code !== 'charge_already_refunded') return res.status(400).json({ message: msg });
+   }
+
+   const updated = await req.db.donation.update({
+      where: { id: d.id },
+      data: { status: 'refunded' },
+      include: { campaign: { select: { id: true, name: true, slug: true } } },
+   });
+   await logActivity(req.db, {
+      type: 'donation',
+      actorId: req.user.id,
+      title: `Refunded ${formatMoney(d.amountCents)} to ${d.isAnonymous ? 'an anonymous donor' : d.donorName || 'a donor'}${d.campaign ? ` (${d.campaign.name})` : ''}`,
+      detail: 'Refund issued from AssociationOS',
+      meta: { donationId: d.id, campaignId: d.campaignId, refund: true },
+   });
+   res.json(updated);
+};

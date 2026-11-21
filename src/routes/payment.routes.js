@@ -1,7 +1,7 @@
 import express from 'express';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import {
-   getStatus, connect, dashboardLink, memberCheckout, publicCampaign, publicCheckout, availability,
+   getStatus, connect, dashboardLink, memberCheckout, publicCampaign, publicCheckout, availability, refundDonation,
 } from '../controllers/payment.controller.js';
 import {
    listDonations, donationSummary, recordDonation, deleteDonation, myDonations,
@@ -24,6 +24,7 @@ donationRoutes.get('/summary', authMiddleware, requireAdmin, donationSummary);
 donationRoutes.get('/', authMiddleware, requireAdmin, listDonations);
 donationRoutes.post('/', authMiddleware, requireAdmin, recordDonation);
 donationRoutes.delete('/:id', authMiddleware, requireAdmin, deleteDonation);
+donationRoutes.post('/:id/refund', authMiddleware, requireAdmin, refundDonation);
 
 // /api/public - no login (public campaign pages)
 const checkoutLimiter = rateLimit({

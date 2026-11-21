@@ -35,6 +35,9 @@ const fakeStripe = {
       createLoginLink: async () => ({ url: 'https://connect.stripe.test/express/login' }),
    },
    accountLinks: { create: async (p) => { stripeCalls.push(['accountLinks.create', p]); return { url: 'https://connect.stripe.test/setup/abc' }; } },
+   refunds: {
+      create: async (p, opts) => { stripeCalls.push(['refunds.create', p, opts]); return { id: `re_${Date.now()}`, status: 'succeeded' }; },
+   },
    checkout: {
       sessions: {
          create: async (p, opts) => {
@@ -445,4 +448,27 @@ test('platform admin sets a fee; checkout then includes the application fee', as
    const [, params] = stripeCalls.filter((x) => x[0] === 'checkout.sessions.create').at(-1);
    assert.equal(params.payment_intent_data.application_fee_amount, 250);
    await call('PUT', `/api/platform/organizations/${id}/fee`, { token: t.platform, body: { platformFeePercent: 0 } });
+});
+
+test('admin refunds an online gift from AssociationOS; transfer reversed; other orgs and members refused', async () => {
+   const org = await prisma.organization.findUnique({ where: { slug: A.slug } });
+   const d = await prisma.donation.create({
+      data: { organizationId: org.id, amountCents: 4000, method: 'stripe', status: 'succeeded', donorName: 'Refund Me', stripePaymentIntentId: `pi_refund_${Date.now()}`, paidAt: new Date() },
+   });
+   assert.equal((await call('POST', `/api/donations/${d.id}/refund`, { token: t.aMember })).status, 403);
+   assert.equal((await call('POST', `/api/donations/${d.id}/refund`, { token: t.bAdmin })).status, 404);
+
+   const r = await call('POST', `/api/donations/${d.id}/refund`, { token: t.aAdmin });
+   assert.equal(r.status, 200, r.raw);
+   assert.equal(r.body.status, 'refunded');
+   const [, params, opts] = stripeCalls.filter((x) => x[0] === 'refunds.create').at(-1);
+   assert.equal(params.payment_intent, d.stripePaymentIntentId);
+   assert.equal(params.reverse_transfer, true);
+   assert.ok(opts.idempotencyKey);
+
+   assert.equal((await call('POST', `/api/donations/${d.id}/refund`, { token: t.aAdmin })).status, 400, 'cannot refund twice');
+   const offline = await prisma.donation.findFirst({ where: { organizationId: org.id, method: 'check' } });
+   assert.equal((await call('POST', `/api/donations/${offline.id}/refund`, { token: t.aAdmin })).status, 400, 'offline gifts are not refunded through Stripe');
+   const feed = await call('GET', '/api/notifications?type=donation', { token: t.aAdmin });
+   assert.ok(feed.body.items.some((i) => i.meta?.donationId === d.id && i.meta?.refund));
 });
