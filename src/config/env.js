@@ -25,12 +25,12 @@ export const env = {
    // first non-wildcard CORS origin.
    APP_URL: (process.env.APP_URL || list(process.env.CORS_ORIGINS || 'http://localhost:3000').find((o) => !o.includes('*')) || 'http://localhost:3000').replace(/\/$/, ''),
    // Email (Mailgun). Sending stays off until key, domain and from are set.
-   MAILGUN_API_KEY: process.env.MAILGUN_API_KEY || '',
-   MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN || '',
+   MAILGUN_API_KEY: (process.env.MAILGUN_API_KEY || '').trim(),
+   MAILGUN_DOMAIN: (process.env.MAILGUN_DOMAIN || '').trim(),
    // US region by default; EU accounts use https://api.eu.mailgun.net
-   MAILGUN_API_BASE: process.env.MAILGUN_API_BASE || 'https://api.mailgun.net',
-   MAILGUN_WEBHOOK_SIGNING_KEY: process.env.MAILGUN_WEBHOOK_SIGNING_KEY || '',
-   EMAIL_FROM: process.env.EMAIL_FROM || '',
+   MAILGUN_API_BASE: (process.env.MAILGUN_API_BASE || 'https://api.mailgun.net').trim(),
+   MAILGUN_WEBHOOK_SIGNING_KEY: (process.env.MAILGUN_WEBHOOK_SIGNING_KEY || '').trim(),
+   EMAIL_FROM: (process.env.EMAIL_FROM || '').trim(),
    // Stripe Connect. Online donations stay off until the secret key is set.
    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',

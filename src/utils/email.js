@@ -91,8 +91,15 @@ export async function sendBatch({ people, subject, body, organization, color, re
          },
          body: form.toString(),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) return { ok: false, error: String(json?.message || `Mailgun error ${res.status}`).slice(0, 300) };
+      // Mailgun answers some errors (e.g. 401 Forbidden) in plain text, not JSON.
+      const raw = await res.text().catch(() => '');
+      let json = {};
+      try { json = raw ? JSON.parse(raw) : {}; } catch { json = {}; }
+      if (!res.ok) {
+         const detail = String(json?.message || raw || '').trim();
+         const hint = res.status === 401 ? ' (check MAILGUN_API_KEY and that the key belongs to this domain and region)' : '';
+         return { ok: false, error: `Mailgun error ${res.status}${detail ? `: ${detail}` : ''}${hint}`.slice(0, 300) };
+      }
       return json?.id ? { ok: true, id: normalizeMessageId(json.id) } : { ok: false, error: 'Mailgun returned no message id' };
    } catch (err) {
       return { ok: false, error: String(err?.message || err).slice(0, 300) };
