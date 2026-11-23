@@ -1,5 +1,5 @@
 // Directory profiles, Notifications, Messages and Fundraising (donations,
-// Stripe Connect). Stripe and Resend are replaced with fakes; nothing leaves
+// Stripe Connect). Stripe and Mailgun are replaced with fakes; nothing leaves
 // the machine. Needs the same migrated + seeded database as isolation.test.js.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ process.env.NODE_ENV = 'test';
 process.env.STRIPE_SECRET_KEY = 'sk_test_fake';
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_platform';
 process.env.APP_URL = 'https://app.example.test';
-// Email starts switched OFF (RESEND_API_KEY unset); one test turns it on.
+// Email starts switched OFF (Mailgun not configured); one test turns it on.
 
 const { default: app } = await import('../src/app.js');
 const { prisma } = await import('../src/config/db.js');
@@ -49,17 +49,13 @@ const fakeStripe = {
    webhooks: realWebhooks,
 };
 
-const resendBatches = [];
+const mailgunCalls = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
-   if (String(url).startsWith('https://api.resend.com/')) {
-      const emails = JSON.parse(opts.body);
-      resendBatches.push(emails);
-      // Fail anyone whose address contains "bounce"
-      if (emails.every((e) => e.to[0].includes('bounce'))) {
-         return new Response(JSON.stringify({ message: 'Invalid to address' }), { status: 422 });
-      }
-      return new Response(JSON.stringify({ data: emails.map((_, i) => ({ id: `re_${resendBatches.length}_${i}` })) }), { status: 200 });
+   if (String(url).startsWith('https://api.mailgun.net/')) {
+      const form = new URLSearchParams(opts.body);
+      mailgunCalls.push({ url: String(url), auth: opts.headers.Authorization, form });
+      return new Response(JSON.stringify({ id: `<2026112300.${mailgunCalls.length}@mg.example.test>`, message: 'Queued. Thank you.' }), { status: 200 });
    }
    return realFetch(url, opts);
 };
@@ -218,9 +214,9 @@ test('audience preview counts only the caller organization', async () => {
    assert.equal(custom.body.count, 0, 'custom picks from another org are dropped');
 });
 
-test('without Resend configured, "send" saves the message as ready and sends nothing', async () => {
+test('without Mailgun configured, "send" saves the message as ready and sends nothing', async () => {
    assert.equal((await call('GET', '/api/messages/config', { token: t.aAdmin })).body.emailEnabled, false);
-   const before = resendBatches.length;
+   const before = mailgunCalls.length;
    const r = await call('POST', '/api/messages', {
       token: t.aAdmin,
       body: { subject: 'Hello {{first_name}}', body: 'Welcome to {{organization}}', audienceType: 'all_members', action: 'send' },
@@ -228,7 +224,7 @@ test('without Resend configured, "send" saves the message as ready and sends not
    assert.equal(r.status, 201, r.raw);
    assert.equal(r.body.status, 'ready');
    assert.equal(r.body.emailEnabled, false);
-   assert.equal(resendBatches.length, before);
+   assert.equal(mailgunCalls.length, before);
 
    const again = await call('POST', `/api/messages/${r.body.id}/send`, { token: t.aAdmin });
    assert.equal(again.status, 202);
@@ -240,10 +236,11 @@ test('without Resend configured, "send" saves the message as ready and sends not
    assert.equal(bSend.status, 404);
 });
 
-test('with Resend configured, messages send with merge fields and track delivery via webhook', async () => {
-   env.RESEND_API_KEY = 're_test';
-   env.EMAIL_FROM = 'noreply@apperr.test';
-   env.RESEND_WEBHOOK_SECRET = 'whsec_' + Buffer.from('resend-secret-for-tests').toString('base64');
+test('with Mailgun configured, messages send as one personalised batch and track delivery via signed webhook', async () => {
+   env.MAILGUN_API_KEY = 'key-test';
+   env.MAILGUN_DOMAIN = 'mg.example.test';
+   env.EMAIL_FROM = 'noreply@mg.example.test';
+   env.MAILGUN_WEBHOOK_SIGNING_KEY = 'mailgun-signing-key-for-tests';
    try {
       const draft = await call('POST', '/api/messages', {
          token: t.aAdmin,
@@ -251,40 +248,77 @@ test('with Resend configured, messages send with merge fields and track delivery
       });
       assert.equal(draft.body.status, 'draft');
 
-      const before = resendBatches.length;
+      const before = mailgunCalls.length;
       const sent = await call('POST', `/api/messages/${draft.body.id}/send`, { token: t.aAdmin });
       assert.equal(sent.status, 200, sent.raw);
       assert.equal(sent.body.status, 'sent');
       assert.ok(sent.body.sentCount > 0);
-      const batch = resendBatches.slice(before).flat();
-      assert.equal(batch.length, sent.body.sentCount);
-      assert.ok(batch[0].from.startsWith('Bayou City'), batch[0].from);
-      assert.ok(!batch[0].subject.includes('{{'), 'merge fields replaced');
-      assert.ok(batch.every((e) => e.to[0].endsWith('@bayoucitychamber.org') || !e.to[0].includes('lonestarpros')), 'no org B recipients');
+
+      const callsNow = mailgunCalls.slice(before);
+      assert.equal(callsNow.length, 1, 'one batch call');
+      const { url, auth, form } = callsNow[0];
+      assert.equal(url, 'https://api.mailgun.net/v3/mg.example.test/messages');
+      assert.equal(auth, `Basic ${Buffer.from('api:key-test').toString('base64')}`);
+      const to = form.getAll('to');
+      assert.equal(to.length, sent.body.sentCount);
+      assert.ok(to.every((e) => !e.includes('lonestarpros')), 'no org B recipients');
+      assert.ok(form.get('from').startsWith('Bayou City'), form.get('from'));
+      assert.equal(form.get('subject'), 'Hi %recipient.first_name%');
+      assert.ok(form.get('text').includes('Bayou City'), 'organization filled in directly');
+      assert.ok(form.get('html').includes('%recipient.name_h%'), 'HTML uses escaped copies');
+      const vars = JSON.parse(form.get('recipient-variables'));
+      assert.equal(Object.keys(vars).length, to.length);
+      assert.equal(form.get('v:aos_message_id'), String(draft.body.id));
 
       const twice = await call('POST', `/api/messages/${draft.body.id}/send`, { token: t.aAdmin });
       assert.equal(twice.status, 400, 'cannot send twice');
 
-      // Delivery webhook
-      const rec = await prisma.messageRecipient.findFirst({ where: { messageId: draft.body.id } });
-      const payload = JSON.stringify({ type: 'email.opened', created_at: new Date().toISOString(), data: { email_id: rec.providerId } });
+      // Webhooks
       const crypto = await import('node:crypto');
-      const id = 'msg_1';
-      const ts = String(Math.floor(Date.now() / 1000));
-      const sig = crypto.createHmac('sha256', Buffer.from('resend-secret-for-tests')).update(`${id}.${ts}.${payload}`).digest('base64');
-      const bad = await call('POST', '/api/messages/webhook/resend', { raw: payload, headers: { 'svix-id': id, 'svix-timestamp': ts, 'svix-signature': 'v1,AAAA' } });
-      assert.equal(bad.status, 400);
-      const ok = await call('POST', '/api/messages/webhook/resend', { raw: payload, headers: { 'svix-id': id, 'svix-timestamp': ts, 'svix-signature': `v1,${sig}` } });
-      assert.equal(ok.status, 200, ok.raw);
-
-      const detail = await call('GET', `/api/messages/${draft.body.id}`, { token: t.aAdmin });
-      assert.equal(detail.body.stats.opened, 1);
+      const rec = await prisma.messageRecipient.findFirst({ where: { messageId: draft.body.id } });
+      const hook = (event, extra = {}, key = 'mailgun-signing-key-for-tests') => {
+         const timestamp = String(Math.floor(Date.now() / 1000));
+         const token = crypto.randomBytes(16).toString('hex');
+         const signature = crypto.createHmac('sha256', key).update(timestamp + token).digest('hex');
+         return JSON.stringify({
+            signature: { timestamp, token, signature },
+            'event-data': { event, recipient: rec.email.toUpperCase(), timestamp: Date.now() / 1000, message: { headers: { 'message-id': rec.providerId } }, ...extra },
+         });
+      };
+      assert.equal((await call('POST', '/api/messages/webhook/mailgun', { raw: hook('opened', {}, 'wrong-key') })).status, 406);
+      for (const ev of ['delivered', 'opened', 'opened', 'clicked']) {
+         const r = await call('POST', '/api/messages/webhook/mailgun', { raw: hook(ev), headers: { 'content-type': 'application/json' } });
+         assert.equal(r.status, 200, r.raw);
+      }
+      let detail = await call('GET', `/api/messages/${draft.body.id}`, { token: t.aAdmin });
       assert.equal(detail.body.stats.delivered, 1);
+      assert.equal(detail.body.stats.opened, 1);
+      assert.equal(detail.body.stats.clicked, 1);
+
+      // A temporary failure is ignored; a permanent one marks the bounce.
+      const other = await prisma.messageRecipient.findFirst({ where: { messageId: draft.body.id, NOT: { id: rec.id } } });
+      if (other) {
+         const mk = (severity) => {
+            const timestamp = String(Math.floor(Date.now() / 1000));
+            const token = crypto.randomBytes(16).toString('hex');
+            const signature = crypto.createHmac('sha256', 'mailgun-signing-key-for-tests').update(timestamp + token).digest('hex');
+            return JSON.stringify({ signature: { timestamp, token, signature }, 'event-data': { event: 'failed', severity, recipient: other.email, timestamp: Date.now() / 1000, message: { headers: { 'message-id': other.providerId } }, 'delivery-status': { description: 'Mailbox does not exist' } } });
+         };
+         await call('POST', '/api/messages/webhook/mailgun', { raw: mk('temporary') });
+         assert.equal((await prisma.messageRecipient.findUnique({ where: { id: other.id } })).status, 'sent');
+         await call('POST', '/api/messages/webhook/mailgun', { raw: mk('permanent') });
+         const b = await prisma.messageRecipient.findUnique({ where: { id: other.id } });
+         assert.equal(b.status, 'bounced');
+         assert.equal(b.error, 'Mailbox does not exist');
+         detail = await call('GET', `/api/messages/${draft.body.id}`, { token: t.aAdmin });
+         assert.equal(detail.body.stats.failed, 1);
+      }
 
       const feed = await call('GET', '/api/notifications?type=message_sent', { token: t.aAdmin });
       assert.ok(feed.body.items.some((i) => i.meta?.messageId === draft.body.id));
    } finally {
-      env.RESEND_API_KEY = '';
+      env.MAILGUN_API_KEY = '';
+      env.MAILGUN_DOMAIN = '';
       env.EMAIL_FROM = '';
    }
 });

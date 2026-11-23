@@ -24,10 +24,13 @@ export const env = {
    // The web app's public URL, used in Stripe return links. Defaults to the
    // first non-wildcard CORS origin.
    APP_URL: (process.env.APP_URL || list(process.env.CORS_ORIGINS || 'http://localhost:3000').find((o) => !o.includes('*')) || 'http://localhost:3000').replace(/\/$/, ''),
-   // Email (Resend). Sending stays off until both are set.
-   RESEND_API_KEY: process.env.RESEND_API_KEY || '',
+   // Email (Mailgun). Sending stays off until key, domain and from are set.
+   MAILGUN_API_KEY: process.env.MAILGUN_API_KEY || '',
+   MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN || '',
+   // US region by default; EU accounts use https://api.eu.mailgun.net
+   MAILGUN_API_BASE: process.env.MAILGUN_API_BASE || 'https://api.mailgun.net',
+   MAILGUN_WEBHOOK_SIGNING_KEY: process.env.MAILGUN_WEBHOOK_SIGNING_KEY || '',
    EMAIL_FROM: process.env.EMAIL_FROM || '',
-   RESEND_WEBHOOK_SECRET: process.env.RESEND_WEBHOOK_SECRET || '',
    // Stripe Connect. Online donations stay off until the secret key is set.
    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY || '',
    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET || '',

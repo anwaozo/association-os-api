@@ -2,9 +2,8 @@ import { prisma } from '../config/db.js';
 import { ROLES } from '../middleware/auth.js';
 import { logActivity } from '../utils/activity.js';
 import {
-   emailEnabled, mergeFields, renderHtml, sendBatch, verifyResendSignature, BATCH_SIZE,
+   emailEnabled, sendBatch, verifyMailgunSignature, normalizeMessageId, BATCH_SIZE,
 } from '../utils/email.js';
-import { env } from '../config/env.js';
 
 // ---------------------------------------------------------------------------
 // Templates
@@ -199,41 +198,38 @@ async function deliver(db, message, { orgId, senderEmail }) {
       data: { status: 'sending', audienceLabel: audience.label, recipientCount: people.length },
    });
 
-   const from = `${org.name} <${env.EMAIL_FROM}>`;
    const replyTo = org.contactEmail || senderEmail || undefined;
    let sent = 0;
    let failed = 0;
 
    for (let i = 0; i < people.length; i += BATCH_SIZE) {
       const chunk = people.slice(i, i + BATCH_SIZE);
-      const emails = chunk.map((p) => {
-         const vars = { name: p.name, email: p.email, organization: org.name };
-         const body = mergeFields(message.body, vars);
-         return {
-            from,
-            to: [p.email],
-            subject: mergeFields(message.subject, vars),
-            text: body,
-            html: renderHtml(body, { organization: org.name, color: org.primaryColor || undefined }),
-            ...(replyTo ? { reply_to: replyTo } : {}),
-         };
+      const result = await sendBatch({
+         people: chunk,
+         subject: message.subject,
+         body: message.body,
+         organization: org.name,
+         color: org.primaryColor || undefined,
+         replyTo,
+         messageId: message.id,
       });
-      const results = await sendBatch(emails);
       const now = new Date();
+      // Mailgun gives one id per batch; webhooks name the recipient, so rows
+      // are matched on (providerId, email).
       await db.messageRecipient.createMany({
-         data: chunk.map((p, j) => ({
+         data: chunk.map((p) => ({
             messageId: message.id,
             userId: p.id,
             name: p.name,
             email: p.email,
-            status: results[j].ok ? 'sent' : 'failed',
-            providerId: results[j].id || null,
-            error: results[j].ok ? null : results[j].error,
-            sentAt: results[j].ok ? now : null,
+            status: result.ok ? 'sent' : 'failed',
+            providerId: result.id || null,
+            error: result.ok ? null : result.error,
+            sentAt: result.ok ? now : null,
          })),
       });
-      sent += results.filter((r) => r.ok).length;
-      failed += results.filter((r) => !r.ok).length;
+      if (result.ok) sent += chunk.length;
+      else failed += chunk.length;
    }
 
    const status = failed === 0 ? 'sent' : sent === 0 ? 'failed' : 'partial';
@@ -400,34 +396,42 @@ export const getMessage = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
-// Resend webhook (delivery, opens, clicks, bounces). Not tenant-scoped:
-// rows are found by Resend's unique email id.
-// POST /api/messages/webhook/resend   (raw body)
+// Mailgun webhook (delivered, opened, clicked, permanent failures, spam
+// complaints). Not tenant-scoped: rows are found by Mailgun's message id plus
+// the recipient's address.
+// POST /api/messages/webhook/mailgun   (raw body, JSON)
 // ---------------------------------------------------------------------------
-export const resendWebhook = async (req, res) => {
+export const mailgunWebhook = async (req, res) => {
    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || '');
-   if (!verifyResendSignature(raw, req.headers)) return res.status(400).json({ message: 'Invalid signature' });
+   let payload;
+   try { payload = JSON.parse(raw); } catch { return res.status(400).json({ message: 'Invalid JSON' }); }
+   if (!verifyMailgunSignature(payload?.signature)) return res.status(406).json({ message: 'Invalid signature' });
 
-   let event;
-   try { event = JSON.parse(raw); } catch { return res.status(400).json({ message: 'Invalid JSON' }); }
-   const providerId = event?.data?.email_id;
-   if (!providerId) return res.json({ ok: true });
+   const ev = payload['event-data'] || {};
+   const providerId = normalizeMessageId(ev.message?.headers?.['message-id']);
+   const email = String(ev.recipient || '').toLowerCase();
+   if (!providerId || !email) return res.json({ ok: true });
 
-   const at = event.created_at ? new Date(event.created_at) : new Date();
+   const at = ev.timestamp ? new Date(Number(ev.timestamp) * 1000) : new Date();
    const data = {};
-   switch (event.type) {
-      case 'email.delivered': data.status = 'delivered'; data.deliveredAt = at; break;
-      case 'email.opened': data.openedAt = at; break;
-      case 'email.clicked': data.clickedAt = at; break;
-      case 'email.bounced':
-      case 'email.complained':
-         data.status = 'bounced'; data.error = event.type === 'email.bounced' ? 'Bounced' : 'Marked as spam'; break;
+   switch (ev.event) {
+      case 'delivered': data.status = 'delivered'; data.deliveredAt = at; break;
+      case 'opened': data.openedAt = at; break;
+      case 'clicked': data.clickedAt = at; break;
+      case 'failed':
+         if (ev.severity !== 'permanent') return res.json({ ok: true }); // Mailgun keeps retrying temporary failures
+         data.status = 'bounced';
+         data.error = String(ev['delivery-status']?.description || ev['delivery-status']?.message || ev.reason || 'Bounced').slice(0, 300);
+         break;
+      case 'complained': data.status = 'bounced'; data.error = 'Marked as spam'; break;
       default: return res.json({ ok: true });
    }
-   // Only set opened/clicked once, keep the first time.
-   const where = { providerId };
+   const where = { providerId, email: { equals: email, mode: 'insensitive' } };
+   // Keep the first open and click time.
    if (data.openedAt) where.openedAt = null;
    if (data.clickedAt) where.clickedAt = null;
+   // A late "delivered" must not undo a bounce.
+   if (data.status === 'delivered') where.status = { notIn: ['bounced'] };
    await prisma.messageRecipient.updateMany({ where, data });
    res.json({ ok: true });
 };

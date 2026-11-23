@@ -1,27 +1,43 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
 
-// Email goes out through Resend (https://resend.com). Until RESEND_API_KEY
-// and EMAIL_FROM are set, messages are saved as "ready" and nothing is sent.
-export const emailEnabled = () => Boolean(env.RESEND_API_KEY && env.EMAIL_FROM);
+// Email goes out through Mailgun (US region by default). Until
+// MAILGUN_API_KEY, MAILGUN_DOMAIN and EMAIL_FROM are set, messages are saved
+// as "ready" and nothing is sent.
+export const emailEnabled = () => Boolean(env.MAILGUN_API_KEY && env.MAILGUN_DOMAIN && env.EMAIL_FROM);
 
-const RESEND_BATCH_URL = 'https://api.resend.com/emails/batch';
-export const BATCH_SIZE = 100; // Resend's batch limit
+// Mailgun accepts up to 1,000 recipients per batch call. Each recipient gets
+// their own copy (recipient-variables), so nobody sees anyone else's address.
+export const BATCH_SIZE = 1000;
 
 const escapeHtml = (s) =>
    String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-// {{first_name}} {{name}} {{email}} {{organization}}
+const firstName = (name) => (name || '').trim().split(/\s+/)[0] || 'there';
+
+// {{first_name}} {{name}} {{email}} {{organization}} for one person (preview, tests).
 export function mergeFields(text, { name, email, organization }) {
-   const first = (name || '').trim().split(/\s+/)[0] || 'there';
    return String(text)
-      .replace(/\{\{\s*first_name\s*\}\}/gi, first)
-      .replace(/\{\{\s*name\s*\}\}/gi, name || first)
+      .replace(/\{\{\s*first_name\s*\}\}/gi, firstName(name))
+      .replace(/\{\{\s*name\s*\}\}/gi, name || firstName(name))
       .replace(/\{\{\s*email\s*\}\}/gi, email || '')
       .replace(/\{\{\s*organization\s*\}\}/gi, organization || '');
 }
 
+// Turns our merge fields into Mailgun's per-recipient placeholders. The
+// organization name is the same for everyone, so it is filled in directly.
+// `html` picks the HTML-escaped copies of each value.
+function toMailgunPlaceholders(text, organization, html = false) {
+   const v = (k) => `%recipient.${k}${html ? '_h' : ''}%`;
+   return String(text)
+      .replace(/\{\{\s*first_name\s*\}\}/gi, v('first_name'))
+      .replace(/\{\{\s*name\s*\}\}/gi, v('name'))
+      .replace(/\{\{\s*email\s*\}\}/gi, v('email'))
+      .replace(/\{\{\s*organization\s*\}\}/gi, html ? escapeHtml(organization) : organization);
+}
+
 // Plain-text body -> simple branded HTML. Links become clickable.
+// Mailgun placeholders (%recipient.x%) pass through untouched.
 export function renderHtml(body, { organization, color = '#1F3864' }) {
    const paragraphs = escapeHtml(body)
       .split(/\n{2,}/)
@@ -36,43 +52,63 @@ export function renderHtml(body, { organization, color = '#1F3864' }) {
 </div></body></html>`;
 }
 
-// Sends one batch (<= 100). Returns [{ ok, id?, error? }] in input order.
-export async function sendBatch(emails) {
+// Mailgun returns "<id@domain>"; webhooks report it without the brackets.
+export const normalizeMessageId = (id) => String(id || '').trim().replace(/^<|>$/g, '');
+
+// Sends one batch (<= 1,000 people) as a single Mailgun call.
+// people: [{ name, email }]. Returns { ok, id?, error? } for the whole batch.
+export async function sendBatch({ people, subject, body, organization, color, replyTo, messageId }) {
+   const vars = {};
+   for (const p of people) {
+      const f = firstName(p.name);
+      const n = p.name || f;
+      vars[p.email] = {
+         first_name: f, name: n, email: p.email,
+         first_name_h: escapeHtml(f), name_h: escapeHtml(n), email_h: escapeHtml(p.email),
+      };
+   }
+
+   const form = new URLSearchParams();
+   form.append('from', `${organization} <${env.EMAIL_FROM}>`);
+   for (const p of people) form.append('to', p.email);
+   form.append('subject', toMailgunPlaceholders(subject, organization));
+   form.append('text', toMailgunPlaceholders(body, organization));
+   form.append('html', renderHtml(toMailgunPlaceholders(body, organization, true), { organization, color }));
+   form.append('recipient-variables', JSON.stringify(vars));
+   form.append('o:tracking', 'yes');
+   form.append('o:tracking-opens', 'yes');
+   form.append('o:tracking-clicks', 'htmlonly');
+   if (replyTo) form.append('h:Reply-To', replyTo);
+   if (messageId) form.append('v:aos_message_id', String(messageId));
+
+   const base = env.MAILGUN_API_BASE.replace(/\/$/, '');
    try {
-      const res = await fetch(RESEND_BATCH_URL, {
+      const res = await fetch(`${base}/v3/${encodeURIComponent(env.MAILGUN_DOMAIN)}/messages`, {
          method: 'POST',
-         headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-         body: JSON.stringify(emails),
+         headers: {
+            Authorization: `Basic ${Buffer.from(`api:${env.MAILGUN_API_KEY}`).toString('base64')}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+         },
+         body: form.toString(),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-         const error = String(json?.message || json?.error || `Resend error ${res.status}`).slice(0, 300);
-         return emails.map(() => ({ ok: false, error }));
-      }
-      const ids = Array.isArray(json?.data) ? json.data : [];
-      return emails.map((_, i) => (ids[i]?.id ? { ok: true, id: ids[i].id } : { ok: false, error: 'No id returned' }));
+      if (!res.ok) return { ok: false, error: String(json?.message || `Mailgun error ${res.status}`).slice(0, 300) };
+      return json?.id ? { ok: true, id: normalizeMessageId(json.id) } : { ok: false, error: 'Mailgun returned no message id' };
    } catch (err) {
-      return emails.map(() => ({ ok: false, error: String(err?.message || err).slice(0, 300) }));
+      return { ok: false, error: String(err?.message || err).slice(0, 300) };
    }
 }
 
-// Resend signs webhooks with Svix: HMAC-SHA256 over "id.timestamp.body",
-// keyed with the base64 part of the "whsec_..." secret.
-export function verifyResendSignature(rawBody, headers, secret = env.RESEND_WEBHOOK_SECRET) {
-   if (!secret) return false;
-   const id = headers['svix-id'];
-   const ts = headers['svix-timestamp'];
-   const sigHeader = headers['svix-signature'];
-   if (!id || !ts || !sigHeader) return false;
-   if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
-   const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
-   const expected = crypto.createHmac('sha256', key).update(`${id}.${ts}.${rawBody}`).digest();
-   return String(sigHeader)
-      .split(' ')
-      .map((part) => part.split(',')[1])
-      .filter(Boolean)
-      .some((sig) => {
-         const given = Buffer.from(sig, 'base64');
-         return given.length === expected.length && crypto.timingSafeEqual(given, expected);
-      });
+// Mailgun signs each webhook: HMAC-SHA256 (hex) of timestamp + token, keyed
+// with the domain's HTTP webhook signing key.
+export function verifyMailgunSignature(signature, key = env.MAILGUN_WEBHOOK_SIGNING_KEY) {
+   if (!key || !signature) return false;
+   const { timestamp, token, signature: sig } = signature;
+   if (!timestamp || !token || !sig) return false;
+   // Mailgun retries for up to 8 hours with the original signature.
+   if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 24 * 3600) return false;
+   const expected = crypto.createHmac('sha256', key).update(`${timestamp}${token}`).digest('hex');
+   const a = Buffer.from(String(sig));
+   const b = Buffer.from(expected);
+   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

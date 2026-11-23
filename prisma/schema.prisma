@@ -330,7 +330,7 @@ model MessageRecipient {
   name           String?
   email          String
   status         String    @default("pending")
-  providerId     String?   @unique
+  providerId     String?
   error          String?
   sentAt         DateTime?
   deliveredAt    DateTime?
@@ -343,6 +343,7 @@ model MessageRecipient {
 
   @@index([organizationId])
   @@index([messageId])
+  @@index([providerId])
 }
 
 // ---------------------------------------------------------------------------

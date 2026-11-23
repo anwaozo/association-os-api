@@ -104,14 +104,15 @@ tier change, campaign created, donation, message sent).
 | GET | `/api/notifications/unread-count` | org admin |
 | POST | `/api/notifications/seen` | org admin |
 
-### Messages (email through Resend)
+### Messages (email through Mailgun)
 Each organization gets five editable default templates. Audiences: `all_members`,
 `members_and_contacts`, `tier` (`{ tierId }`), `event_attendees` (`{ eventId }`),
 `custom` (`{ userIds }`). Merge fields: `{{first_name}}`, `{{name}}`, `{{email}}`, `{{organization}}`.
 
-Until `RESEND_API_KEY` and `EMAIL_FROM` are set, "send" saves a message as `ready`; once email
-is on, admins send ready messages with one click. Messages go out in batches of 100 from
-`"<Org name>" <EMAIL_FROM>` with reply-to set to the org's contact email.
+Until `MAILGUN_API_KEY`, `MAILGUN_DOMAIN` and `EMAIL_FROM` are set, "send" saves a message as
+`ready`; once email is on, admins send ready messages with one click. Each send is one Mailgun
+batch call per 1,000 people using recipient variables, so every person gets their own copy.
+Mail goes out from `"<Org name>" <EMAIL_FROM>` with reply-to set to the org's contact email.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -121,12 +122,13 @@ is on, admins send ready messages with one click. Messages go out in batches of 
 | GET/POST | `/api/messages` | POST body adds `action: "send" \| "draft"` |
 | GET/PUT/DELETE | `/api/messages/:id` | edit/delete only drafts and ready messages |
 | POST | `/api/messages/:id/send` | |
-| POST | `/api/messages/webhook/resend` | Resend webhook (Svix-signed, no login) |
+| POST | `/api/messages/webhook/mailgun` | Mailgun webhook (signed, no login) |
 
-**Turning email on:** create a Resend account, verify the sending domain (add its DNS records),
-then set `RESEND_API_KEY` and `EMAIL_FROM` on the API site and redeploy. For delivery tracking,
-add a Resend webhook to `https://<api-site>/api/messages/webhook/resend` for `email.delivered`,
-`email.opened`, `email.clicked`, `email.bounced` and `email.complained`, then set `RESEND_WEBHOOK_SECRET`.
+**Turning email on:** verify the sending domain in Mailgun (US region), then on the API site set
+`MAILGUN_API_KEY`, `MAILGUN_DOMAIN` (e.g. `mg.association.apperr.com`) and `EMAIL_FROM`
+(e.g. `noreply@mg.association.apperr.com`) and redeploy. For delivery tracking, add webhooks in
+Mailgun for **Delivered, Opened, Clicked, Permanent failure and Spam complaint**, all pointing to
+`https://<api-site>/api/messages/webhook/mailgun`, then set `MAILGUN_WEBHOOK_SIGNING_KEY`.
 
 ### Fundraising (Stripe Connect, Express accounts)
 Each organization connects its own Stripe Express account from **Settings > Payments**.

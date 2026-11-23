@@ -18,7 +18,7 @@ import notificationRoutes from './routes/notification.routes.js';
 import messageRoutes from './routes/message.routes.js';
 import { paymentRoutes, donationRoutes, publicRoutes } from './routes/payment.routes.js';
 import { stripeWebhook } from './controllers/payment.controller.js';
-import { resendWebhook } from './controllers/message.controller.js';
+import { mailgunWebhook } from './controllers/message.controller.js';
 
 const app = express();
 
@@ -39,7 +39,7 @@ app.use((req, _res, next) => {
 // Webhooks verify a signature over the exact bytes, so they get the raw body
 // and skip JSON parsing and input sanitizing.
 app.post('/api/payments/webhook', express.raw({ type: '*/*', limit: '1mb' }), stripeWebhook);
-app.post('/api/messages/webhook/resend', express.raw({ type: '*/*', limit: '1mb' }), resendWebhook);
+app.post('/api/messages/webhook/mailgun', express.raw({ type: '*/*', limit: '1mb' }), mailgunWebhook);
 
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
