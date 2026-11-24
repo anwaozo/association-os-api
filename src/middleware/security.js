@@ -24,9 +24,9 @@ function sanitizeRequest(req, _res, next) {
 
 // Origins may include a wildcard subdomain, e.g. https://*.netlify.app
 const originMatchers = env.CORS_ORIGINS.map((o) => {
-   if (!o.includes('*')) return (origin) => origin === o;
+   if (!o.includes('*')) return (origin) => origin.toLowerCase() === o;
    const re = new RegExp('^' + o.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9-]+') + '$');
-   return (origin) => re.test(origin);
+   return (origin) => re.test(origin.toLowerCase());
 });
 
 // Netlify sends the real client IP in x-nf-client-connection-ip.

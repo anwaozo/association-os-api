@@ -17,7 +17,11 @@ export const env = {
    JWT_SECRET: required('JWT_SECRET'),
    // Comma-separated list of allowed browser origins, e.g.
    // https://app.associationos.com,https://associationos.netlify.app
-   CORS_ORIGINS: list(process.env.CORS_ORIGINS || 'http://localhost:3000'),
+   // Entries are normalized (quotes, spaces, trailing slashes, case) so a value
+   // pasted as "https://app.example.com/" still matches the browser's origin.
+   CORS_ORIGINS: list(process.env.CORS_ORIGINS || 'http://localhost:3000')
+      .map((o) => o.replace(/^["']+|["']+$/g, '').trim().replace(/\/+$/, '').toLowerCase())
+      .filter(Boolean),
    // Serverless: keep this small (Supabase pooler does the real pooling).
    DB_POOL_MAX: Number(process.env.DB_POOL_MAX || (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME ? 1 : 10)),
    RATE_LIMIT_MAX: Number(process.env.RATE_LIMIT_MAX || 300),
